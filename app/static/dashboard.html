@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plazza · Resolve Dashboard</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#12161c; --muted:#5c6773; --line:#e3e7ec;
+  --accent:#2d6cdf; --good:#1a9a5f; --warn:#c2810a; --bad:#c8452f;
+  --s1:#2d6cdf; --s2:#1a9a5f; --s3:#c2810a; --s4:#8b5cd6; --s5:#c8452f;
+  --s6:#0d9aa8; --s7:#d1568f; --s8:#6b7280;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#0f1216; --panel:#161b22; --ink:#e6edf3; --muted:#8b98a5; --line:#262d36; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 20px;
+  background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;flex-wrap:wrap}
+h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+.live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.on{background:var(--good);box-shadow:0 0 0 0 rgba(26,154,95,.6);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 7px rgba(26,154,95,0)}100%{box-shadow:0 0 0 0 rgba(26,154,95,0)}}
+nav{display:flex;gap:2px;margin-left:auto}
+nav button{background:none;border:1px solid transparent;padding:7px 14px;border-radius:7px;
+  cursor:pointer;color:var(--muted);font-size:13px;font-weight:550;font-family:inherit}
+nav button.sel{background:var(--accent);color:#fff}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;
+  padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:57px;z-index:19}
+.f{display:flex;flex-direction:column;gap:3px}
+.f label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+select,input[type=text],input[type=date]{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;min-width:110px}
+input[type=text]{min-width:180px}
+main{padding:20px}
+.page{display:none} .page.on{display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.card .k{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.card .v{font-size:24px;font-weight:660;letter-spacing:-.02em;margin-top:2px;font-variant-numeric:tabular-nums}
+.card .sub{font-size:11px;color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px}
+.panel h2{font-size:12px;margin:0;padding:11px 14px;border-bottom:1px solid var(--line);
+  text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+  cursor:pointer;user-select:none;position:sticky;top:0;background:var(--panel);font-weight:650}
+th.no{cursor:default}
+tbody tr:hover{background:rgba(45,108,223,.05)}
+td.wrap{white-space:normal;min-width:280px;max-width:420px;color:var(--muted)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;
+  background:rgba(45,108,223,.12);color:var(--accent)}
+.tag.g{background:rgba(26,154,95,.14);color:var(--good)}
+.tag.w{background:rgba(194,129,10,.15);color:var(--warn)}
+.tag.b{background:rgba(200,69,47,.13);color:var(--bad)}
+.tag.n{background:rgba(120,130,145,.15);color:var(--muted)}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+.scroll{overflow-x:auto;max-height:70vh;overflow-y:auto}
+@keyframes flash{from{background:rgba(26,154,95,.28)}to{background:transparent}}
+tr.new{animation:flash 2.5s ease-out}
+.bars{padding:12px 14px}
+.bar{display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;margin-bottom:7px}
+.bar .lb{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .tk{height:17px;border-radius:4px;background:var(--accent);min-width:2px}
+.bar .vl{font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.daygrp{padding:9px 14px;border-bottom:1px solid var(--line)}
+.daygrp .d{font-size:12px;font-weight:650;margin-bottom:6px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.legend span{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.pager{display:flex;gap:8px;align-items:center;padding:10px 14px;font-size:12px;color:var(--muted)}
+.pager button{background:var(--bg);border:1px solid var(--line);color:var(--ink);
+  border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px}
+.pager button:disabled{opacity:.4;cursor:default}
+.err{background:rgba(200,69,47,.1);color:var(--bad);padding:10px 14px;border-radius:8px;margin-bottom:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Plazza · Resolve Dashboard</h1>
+  <div class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting…</span></div>
+  <nav>
+    <button data-p="1" class="sel">Tickets</button>
+    <button data-p="2">Issue breakdown</button>
+    <button data-p="3">Median time</button>
+  </nav>
+</header>
+
+<div class="filters" id="filters">
+  <div class="f"><label>Range</label>
+    <select id="range">
+      <option value="today">Today</option>
+      <option value="yesterday">Yesterday</option>
+      <option value="week" selected>Last 7 days</option>
+      <option value="month">Last 30 days</option>
+      <option value="custom">Custom…</option>
+    </select></div>
+  <div class="f" id="fromwrap" style="display:none"><label>From</label><input type="date" id="from"></div>
+  <div class="f" id="towrap" style="display:none"><label>To</label><input type="date" id="to"></div>
+  <div class="f"><label>Issue from</label>
+    <select id="issue_source"><option value="llm">AI analysis</option><option value="agent">Agent tag</option></select></div>
+  <div class="f"><label>Count</label>
+    <select id="count_mode">
+      <option value="tickets">Tickets (all)</option>
+      <option value="customers">Unique customers</option>
+      <option value="orders">Unique orders</option>
+    </select></div>
+  <div class="f"><label>Issue</label><select id="issue"><option value="">All</option></select></div>
+  <div class="f"><label>Store</label><select id="store"><option value="">All</option></select></div>
+  <div class="f"><label>Fulfilment</label><select id="fulfillment"><option value="">All</option></select></div>
+  <div class="f"><label>Agent</label><select id="agent"><option value="">All</option></select></div>
+  <div class="f"><label>Outcome</label><select id="resolution"><option value="">All</option></select></div>
+  <div class="f"><label>Sentiment</label><select id="sentiment">
+      <option value="">All</option><option value="positive">Positive</option>
+      <option value="neutral">Neutral</option><option value="negative">Negative</option></select></div>
+  <div class="f"><label>Cross-store</label><select id="cross_store">
+      <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
+  <div class="f"><label>Reopened</label><select id="reopened">
+      <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
+  <div class="f"><label>SLA breach</label><select id="sla_breached">
+      <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
+  <div class="f"><label>Search</label><input type="text" id="search" placeholder="CART id, summary…"></div>
+</div>
+
+<main>
+  <div id="err"></div>
+
+  <!-- Page 1 -->
+  <section class="page on" id="p1">
+    <div class="cards" id="p1cards"></div>
+    <div class="panel">
+      <h2>Resolved chats</h2>
+      <div class="scroll"><table id="tbl">
+        <thead><tr>
+          <th data-s="resolved_at">Resolved</th>
+          <th data-s="resolution_secs">Time to resolve</th>
+          <th data-s="first_response_secs">1st response</th>
+          <th data-s="resolver_agent_name">Resolved by</th>
+          <th data-s="llm_issue">Issue</th>
+          <th class="no">Outcome</th>
+          <th class="no">Mood</th>
+          <th data-s="order_id">Order</th>
+          <th data-s="store">Store</th>
+          <th data-s="fulfillment">Fulfilment</th>
+          <th data-s="msg_total">Msgs</th>
+          <th data-s="resolve_seq">#</th>
+          <th class="no">Flags</th>
+          <th class="no">What happened</th>
+          <th class="no">Chat</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+      <div class="pager">
+        <button id="prev">← Prev</button><button id="next">Next →</button>
+        <span id="pginfo"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Page 2 -->
+  <section class="page" id="p2">
+    <div class="cards" id="p2cards"></div>
+    <div id="p2body"></div>
+  </section>
+
+  <!-- Page 3 -->
+  <section class="page" id="p3">
+    <div class="filters" style="position:static;border-radius:10px;border:1px solid var(--line);margin-bottom:16px">
+      <div class="f"><label>Bars grouped by</label>
+        <select id="series">
+          <option value="fulfillment">Fulfilment (instant / deferred)</option>
+          <option value="llm_issue">Issue (AI)</option>
+          <option value="issue_type">Issue (agent tag)</option>
+          <option value="store">Store</option>
+          <option value="resolver_agent_name">Agent</option>
+          <option value="llm_resolution">Outcome</option>
+        </select></div>
+    </div>
+    <div class="panel">
+      <h2>Median resolution time by day</h2>
+      <div id="legend" class="legend"></div>
+      <div id="chart"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const PALETTE = ['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'];
+let page = 1, offset = 0, sort = 'resolved_at', dir = 'desc', seen = new Set(), pending = 0;
+
+/* ---------- formatting ---------- */
+function dur(s){
+  if (s === null || s === undefined) return '—';
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';
+}
+function when(v){
+  if (!v) return '—';
+  // Postgres gives "2026-07-31 18:24:39.61+00:00"; Safari needs the T.
+  const d = new Date(String(v).replace(' ', 'T'));
+  if (isNaN(d)) return v;
+  return d.toLocaleString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short',
+    hour:'2-digit', minute:'2-digit', hour12:true});
+}
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const nice = s => s == null ? '—' : String(s).replace(/_/g,' ').replace(/^\w/, c => c.toUpperCase());
+
+function moodTag(v){
+  if (!v) return '—';
+  const c = v === 'positive' ? 'g' : v === 'negative' ? 'b' : 'n';
+  return `<span class="tag ${c}">${esc(nice(v))}</span>`;
+}
+function outcomeTag(v){
+  if (!v) return '—';
+  const c = v === 'resolved' ? 'g' : v === 'partially_resolved' ? 'w' : 'b';
+  return `<span class="tag ${c}">${esc(nice(v))}</span>`;
+}
+
+/* ---------- query params ---------- */
+function params(extra){
+  const p = new URLSearchParams();
+  p.set('range', $('#range').value);
+  if ($('#range').value === 'custom'){
+    if ($('#from').value) p.set('from', $('#from').value);
+    if ($('#to').value)   p.set('to',   $('#to').value);
+  }
+  p.set('issue_source', $('#issue_source').value);
+  for (const id of ['issue','store','fulfillment','agent','resolution','sentiment',
+                    'cross_store','reopened','sla_breached','search']){
+    const v = $('#'+id).value;
+    if (v) p.set(id, v);
+  }
+  for (const k in (extra||{})) p.set(k, extra[k]);
+  return p.toString();
+}
+async function get(path, extra){
+  const r = await fetch(path + '?' + params(extra));
+  if (!r.ok) throw new Error(path + ' → HTTP ' + r.status + ' ' + (await r.text()).slice(0,200));
+  return r.json();
+}
+const showErr = m => $('#err').innerHTML = m ? `<div class="err">${esc(m)}</div>` : '';
+
+/* ---------- page 1 ---------- */
+async function loadTickets(){
+  const [d, s] = await Promise.all([
+    get('/api/tickets', {limit:100, offset, sort, direction:dir}),
+    get('/api/stats',   {count_mode:$('#count_mode').value}),
+  ]);
+  const m = s.summary;
+  $('#p1cards').innerHTML = [
+    ['Resolved', m.resolved ?? 0, 'in range'],
+    ['Unique customers', m.customers ?? 0, ''],
+    ['Unique orders', m.orders ?? 0, ''],
+    ['Median resolve', dur(m.median_secs), ''],
+    ['Median 1st reply', dur(m.median_first_response_secs), ''],
+    ['Reopened', m.reopened ?? 0, 'resolved 2nd+ time'],
+    ['No order linked', m.no_order_id ?? 0, 'no CART id in chat'],
+  ].map(([k,v,sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div>
+      <div class="sub">${sub}</div></div>`).join('');
+
+  $('#rows').innerHTML = d.rows.length ? d.rows.map(r => {
+    const isNew = seen.size && !seen.has(r.conversation_id);
+    const flags = [
+      r.sla_response_breached ? '<span class="tag w">slow reply</span>' : '',
+      r.sla_resolution_breached ? '<span class="tag b">slow fix</span>' : '',
+      r.llm_escalated ? '<span class="tag w">escalated</span>' : '',
+      r.is_cross_store ? '<span class="tag">cross-store</span>' : '',
+      (r.resolve_seq > 1) ? '<span class="tag n">reopened</span>' : '',
+    ].filter(Boolean).join(' ') || '—';
+    return `<tr class="${isNew?'new':''}">
+      <td>${when(r.resolved_at)}</td>
+      <td class="num">${dur(r.resolution_secs)}</td>
+      <td class="num">${dur(r.first_response_secs)}</td>
+      <td>${esc(r.resolver_agent_name || r.agent_name || '—')}</td>
+      <td>${r.llm_issue ? `<span class="tag">${esc(nice(r.llm_issue))}</span>` : esc(r.issue_type || '—')}</td>
+      <td>${outcomeTag(r.llm_resolution)}</td>
+      <td>${moodTag(r.llm_sentiment)}</td>
+      <td>${esc(r.order_id || '—')}</td>
+      <td>${esc(r.store || '—')}</td>
+      <td>${esc(nice(r.fulfillment))}</td>
+      <td class="num">${r.msg_total ?? '—'}</td>
+      <td class="num">${r.resolve_seq ?? '—'}</td>
+      <td>${flags}</td>
+      <td class="wrap">${esc(r.llm_summary || '')}</td>
+      <td>${r.conversation_url ? `<a href="${esc(r.conversation_url)}" target="_blank" rel="noopener">open ↗</a>` : '—'}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="15" class="empty">No resolved chats in this range.</td></tr>`;
+
+  seen = new Set(d.rows.map(r => r.conversation_id));
+  $('#pginfo').textContent = d.total
+    ? `${offset+1}–${Math.min(offset+d.limit, d.total)} of ${d.total}` : '0 rows';
+  $('#prev').disabled = offset === 0;
+  $('#next').disabled = offset + d.limit >= d.total;
+}
+
+/* ---------- page 2 ---------- */
+function barBlock(title, rows, unit){
+  if (!rows || !rows.length) return '';
+  const max = Math.max(...rows.map(r => r.count)) || 1;
+  return `<div class="panel"><h2>${esc(title)}</h2><div class="bars">` + rows.map(r => `
+    <div class="bar">
+      <div class="lb" title="${esc(r.label)}">${esc(nice(r.label))}</div>
+      <div class="tk" style="width:${Math.max(2, r.count/max*100)}%"></div>
+      <div class="vl">${r.count}${unit?' '+unit:''} · ${dur(r.median_secs)}</div>
+    </div>`).join('') + '</div></div>';
+}
+async function loadStats(){
+  const s = await get('/api/stats', {count_mode:$('#count_mode').value});
+  const m = s.summary;
+  const modeLabel = {tickets:'tickets', customers:'customers', orders:'orders'}[s.count_mode];
+  $('#p2cards').innerHTML = [
+    ['Resolved', m.resolved ?? 0, 'total resolve clicks'],
+    ['Tickets', m.tickets ?? 0, 'incl. repeats'],
+    ['Unique customers', m.customers ?? 0, 'deduped'],
+    ['Unique orders', m.orders ?? 0, 'deduped'],
+    ['Agents', m.agents ?? 0, 'resolving'],
+    ['Median resolve', dur(m.median_secs), ''],
+    ['Reopened', m.reopened ?? 0, ''],
+    ['Slow first reply', m.sla_response_breached ?? 0, 'SLA breach'],
+  ].map(([k,v,sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div>
+      <div class="sub">${sub}</div></div>`).join('');
+
+  $('#p2body').innerHTML =
+      barBlock(`Issue — AI analysis (counted by ${modeLabel})`, s.by_issue, '') +
+      barBlock('Issue — agent tag, for comparison', s.by_issue_agent_tagged, '') +
+      barBlock('Store', s.by_store, '') +
+      barBlock('Fulfilment mode', s.by_fulfillment, '') +
+      barBlock('Outcome', s.by_resolution, '') +
+      barBlock('Customer sentiment', s.by_sentiment, '') +
+      barBlock('Resolving agent', s.by_agent, '')
+      || '<div class="panel"><div class="empty">Nothing in this range.</div></div>';
+}
+
+/* ---------- page 3 ---------- */
+async function loadMedian(){
+  const d = await get('/api/median', {series:$('#series').value});
+  const pts = d.points || [];
+  if (!pts.length){ $('#legend').innerHTML=''; $('#chart').innerHTML = '<div class="empty">Nothing in this range.</div>'; return; }
+
+  const names = [...new Set(pts.map(p => p.series))];
+  const colour = {}; names.forEach((n,i) => colour[n] = `var(${PALETTE[i % PALETTE.length]})`);
+  $('#legend').innerHTML = names.map(n =>
+    `<span><i class="sw" style="background:${colour[n]}"></i>${esc(nice(n))}</span>`).join('');
+
+  const max = Math.max(...pts.map(p => p.median_secs || 0)) || 1;
+  const byDay = {};
+  pts.forEach(p => (byDay[p.day] = byDay[p.day] || []).push(p));
+
+  $('#chart').innerHTML = Object.keys(byDay).sort().reverse().map(day => `
+    <div class="daygrp"><div class="d">${esc(day)}</div>` +
+      byDay[day].sort((a,b) => (b.median_secs||0)-(a.median_secs||0)).map(p => `
+        <div class="bar">
+          <div class="lb">${esc(nice(p.series))}</div>
+          <div class="tk" style="width:${Math.max(2,(p.median_secs||0)/max*100)}%;background:${colour[p.series]}"></div>
+          <div class="vl">${dur(p.median_secs)} · n=${p.count}</div>
+        </div>`).join('') + '</div>').join('');
+}
+
+/* ---------- orchestration ---------- */
+async function refresh(){
+  try{
+    showErr('');
+    if (page === 1) await loadTickets();
+    else if (page === 2) await loadStats();
+    else await loadMedian();
+  }catch(e){ showErr(e.message); }
+}
+
+async function loadFilterOptions(){
+  try{
+    const f = await fetch('/api/filters').then(r => r.json());
+    const fill = (id, vals) => {
+      const el = $('#'+id), cur = el.value;
+      el.innerHTML = '<option value="">All</option>' +
+        (vals||[]).map(v => `<option value="${esc(v)}">${esc(nice(v))}</option>`).join('');
+      el.value = cur;
+    };
+    fill('store', f.stores); fill('fulfillment', f.fulfillments);
+    fill('agent', f.agents); fill('resolution', f.resolutions);
+    fill('issue', $('#issue_source').value === 'llm' ? f.issues_llm : f.issues_agent);
+  }catch(e){ /* filters are a convenience; the pages still work without them */ }
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('sel', x === b));
+  page = +b.dataset.p;
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p'+page));
+  refresh();
+});
+$('#filters').addEventListener('change', e => {
+  const custom = $('#range').value === 'custom';
+  $('#fromwrap').style.display = custom ? '' : 'none';
+  $('#towrap').style.display   = custom ? '' : 'none';
+  if (e.target.id === 'issue_source') loadFilterOptions();
+  offset = 0; refresh();
+});
+let typing; $('#search').addEventListener('input', () => {
+  clearTimeout(typing); typing = setTimeout(() => { offset = 0; refresh(); }, 400);
+});
+$('#series').onchange = refresh;
+document.querySelectorAll('th[data-s]').forEach(th => th.onclick = () => {
+  const c = th.dataset.s;
+  dir = (sort === c && dir === 'desc') ? 'asc' : 'desc';
+  sort = c; offset = 0; refresh();
+});
+$('#prev').onclick = () => { offset = Math.max(0, offset - 100); refresh(); };
+$('#next').onclick = () => { offset += 100; refresh(); };
+
+/* ---------- live push ---------- */
+function connect(){
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { $('#dot').classList.add('on'); $('#livetxt').textContent = 'live'; };
+  es.onmessage = ev => {
+    if (!ev.data || ev.data[0] !== '{') return;   // keepalive comments
+    pending++;
+    $('#livetxt').textContent = `live · ${pending} new`;
+    clearTimeout(window._deb);
+    window._deb = setTimeout(refresh, 1200);      // coalesce bursts of resolves
+  };
+  es.onerror = () => {
+    $('#dot').classList.remove('on');
+    $('#livetxt').textContent = 'reconnecting…';
+    es.close(); setTimeout(connect, 5000);
+  };
+}
+
+loadFilterOptions().then(refresh).then(connect);
+setInterval(refresh, 60000);   // fallback if the SSE stream is silently dropped
+</script>
+</body>
+</html>
