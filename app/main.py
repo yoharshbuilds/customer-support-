@@ -322,7 +322,19 @@ def healthz():
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "dashboard.html")
+    # The UI is built after the backend. Until dashboard.html exists, say so
+    # rather than raising a 500 -- a crashing root path makes a healthy deploy
+    # look broken.
+    page = STATIC / "dashboard.html"
+    if not page.exists():
+        return JSONResponse(
+            {
+                "service": "resolve-dashboard",
+                "ui": "not built yet",
+                "api": ["/healthz", "/api/tickets", "/api/stats", "/api/median", "/api/filters", "/api/stream"],
+            }
+        )
+    return FileResponse(page)
 
 
 if __name__ == "__main__":
