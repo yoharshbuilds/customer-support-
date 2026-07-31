@@ -23,6 +23,28 @@ STATIC = Path(__file__).parent / "static"
 _subscribers: set[asyncio.Queue] = set()
 _client: httpx.AsyncClient | None = None
 _llm: AsyncAnthropic | None = None
+# Strong references to in-flight enrichment tasks. asyncio only keeps a weak
+# reference to a bare create_task(), so a fire-and-forget task can be garbage
+# collected mid-await and vanish without running or raising. That is exactly
+# what happened on the first Render deploy: the row was stored, the immediate
+# enrichment silently never ran, and only the 120s sweeper filled it in.
+_inflight: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _inflight.add(task)
+    task.add_done_callback(_inflight.discard)
+    task.add_done_callback(_log_task_exception)
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Surface a crash in a background task instead of swallowing it."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("background task died: %r", exc, exc_info=exc)
 
 
 async def _broadcast(kind: str, data: dict) -> None:
@@ -151,7 +173,7 @@ async def freshchat_webhook(request: Request):
     if row_id is None:
         return {"ok": True, "duplicate": True}
 
-    asyncio.create_task(_enrich_row(row_id, conversation_id, resolved_at, actor))
+    _spawn(_enrich_row(row_id, conversation_id, resolved_at, actor))
     return {"ok": True, "id": row_id}
 
 
