@@ -128,6 +128,11 @@ async def analyze(client: AsyncAnthropic, transcript: str) -> dict | None:
         resp = await client.messages.create(
             model=MODEL,
             max_tokens=2000,
+            # Classification, not prose. At the default temperature the same
+            # transcript came back `order_cancellation` on one run and
+            # `order_delay` on the next -- which would make the issue breakdown
+            # shift under you on a re-run rather than reflecting real change.
+            temperature=0,
             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
             messages=[{"role": "user", "content": f"<transcript>\n{transcript}\n</transcript>"}],

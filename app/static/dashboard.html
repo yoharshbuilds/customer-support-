@@ -214,7 +214,13 @@ function when(v){
     hour:'2-digit', minute:'2-digit', hour12:true});
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const nice = s => s == null ? '—' : String(s).replace(/_/g,' ').replace(/^\w/, c => c.toUpperCase());
+function nice(s){
+  if (s == null) return '—';
+  // The API uses two different placeholders for a missing value depending on
+  // the query; show one word for both so the pages agree with each other.
+  if (s === 'Unknown' || s === '(unattributed)') return 'Unattributed';
+  return String(s).replace(/_/g,' ').replace(/^\w/, c => c.toUpperCase());
+}
 
 function moodTag(v){
   if (!v) return '—';
@@ -271,9 +277,15 @@ async function loadTickets(){
 
   $('#rows').innerHTML = d.rows.length ? d.rows.map(r => {
     const isNew = seen.size && !seen.has(r.conversation_id);
+    // Freshchat's reply SLA covers EVERY reply in the thread, not just the
+    // first -- a chat can answer in 30s and still breach it later by going
+    // quiet mid-conversation. Labelling this "slow reply" made it look like it
+    // contradicted the 1st-response column sitting next to it.
     const flags = [
-      r.sla_response_breached ? '<span class="tag w">slow reply</span>' : '',
-      r.sla_resolution_breached ? '<span class="tag b">slow fix</span>' : '',
+      r.sla_response_breached
+        ? '<span class="tag w" title="Freshchat reply SLA breached at some point in the thread — not necessarily the first reply">reply SLA</span>' : '',
+      r.sla_resolution_breached
+        ? '<span class="tag b" title="Freshchat resolution SLA breached">resolution SLA</span>' : '',
       r.llm_escalated ? '<span class="tag w">escalated</span>' : '',
       r.is_cross_store ? '<span class="tag">cross-store</span>' : '',
       (r.resolve_seq > 1) ? '<span class="tag n">reopened</span>' : '',
@@ -327,7 +339,7 @@ async function loadStats(){
     ['Agents', m.agents ?? 0, 'resolving'],
     ['Median resolve', dur(m.median_secs), ''],
     ['Reopened', m.reopened ?? 0, ''],
-    ['Slow first reply', m.sla_response_breached ?? 0, 'SLA breach'],
+    ['Reply SLA breached', m.sla_response_breached ?? 0, 'any reply in thread'],
   ].map(([k,v,sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div>
       <div class="sub">${sub}</div></div>`).join('');
 
