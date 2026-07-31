@@ -339,7 +339,18 @@ def healthz():
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n, MAX(resolved_at) AS latest FROM resolve_events")
         row = cur.fetchone()
-    return {"ok": True, "events": row["n"], "latest": str(row["latest"]), "subscribers": len(_subscribers)}
+    # `model` and `llm` are reported so we can confirm from outside what is
+    # actually deployed. A config value that silently differs between .env and
+    # the host has already cost us once (FRESHCHAT_API_BASE), and a model
+    # mismatch would be invisible in the data until the bill arrived.
+    return {
+        "ok": True,
+        "events": row["n"],
+        "latest": str(row["latest"]),
+        "subscribers": len(_subscribers),
+        "model": enrich.analyze.MODEL,
+        "llm": _llm is not None,
+    }
 
 
 @app.get("/")
