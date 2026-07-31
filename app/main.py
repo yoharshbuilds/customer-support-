@@ -334,7 +334,11 @@ async def stream():
     )
 
 
-@app.get("/healthz")
+# HEAD is declared explicitly rather than relying on the framework: Starlette
+# <1.0 added it to every GET route automatically and 1.x does not, so uptime
+# monitors that probe with HEAD (UptimeRobot does by default) got a 405 and
+# reported the service down while it was perfectly healthy.
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 def healthz():
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n, MAX(resolved_at) AS latest FROM resolve_events")
@@ -353,7 +357,7 @@ def healthz():
     }
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def index():
     # The UI is built after the backend. Until dashboard.html exists, say so
     # rather than raising a 500 -- a crashing root path makes a healthy deploy
