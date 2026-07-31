@@ -45,6 +45,9 @@ METABASE_API_KEY = os.getenv("METABASE_API_KEY", "").strip()
 METABASE_DB_ID = int(os.getenv("METABASE_DB_ID", "7"))
 
 # --- Behaviour ---
+# Model that reviews each resolved transcript. Env-overridable so the model can
+# be changed from the Render dashboard without a redeploy of new code.
+ANALYZE_MODEL = os.getenv("ANALYZE_MODEL", "claude-sonnet-5").strip()
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 # How many issue-type series to plot before collapsing the tail into "Other".
 TOP_N_ISSUES = int(os.getenv("TOP_N_ISSUES", "8"))

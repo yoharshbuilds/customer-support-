@@ -21,7 +21,7 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5"
+MODEL = config.ANALYZE_MODEL
 MAX_MESSAGES = 120  # long threads get truncated from the middle, keeping both ends
 
 SYSTEM = """You review resolved customer-support chats for Plazza, an Indian \
