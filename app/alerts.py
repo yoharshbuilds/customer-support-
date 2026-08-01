@@ -24,12 +24,16 @@ RULES = (
     (
         "no_reply",
         "agent resolved without sending the customer a single message",
-        lambda f: (f.get("msg_agent") or 0) == 0,
+        # Requires that the customer actually wrote something. A chat where
+        # nobody said anything is junk, not a failure of service.
+        lambda f: (f.get("msg_agent") or 0) == 0 and (f.get("msg_user") or 0) > 0,
     ),
     (
         "escalation_ignored",
         "customer escalated (anger, threat to complain) and it was not defused",
-        lambda f: bool(f.get("llm_escalation_risk")) and not f.get("llm_escalation_handled"),
+        lambda f: bool(f.get("llm_escalation_risk"))
+        and not f.get("llm_escalation_handled")
+        and f.get("llm_resolution") != "resolved",
     ),
     (
         "deflected_unanswered",
@@ -37,19 +41,38 @@ RULES = (
         lambda f: f.get("llm_resolution") == "deflected" and f.get("llm_answered_ask") == "no",
     ),
     (
-        "left_unhappy",
-        "customer ended the chat unhappy and the problem was not resolved",
-        lambda f: f.get("llm_sentiment") == "negative" and f.get("llm_resolution") != "resolved",
+        "mood_deteriorated",
+        "customer arrived calm and left unhappy",
+        # Deterioration, not just a negative ending. Someone who arrives angry
+        # about a genuine delay and leaves angry is an operations problem; a
+        # customer the chat itself made unhappy is the one worth interrupting for.
+        lambda f: f.get("llm_sentiment") == "negative" and f.get("llm_sentiment_start") != "negative",
     ),
 )
 
+# One failing signal describes ~30% of a normal day -- real, but far too much to
+# interrupt anyone with. Two independent signals is ~10%, and those chats are
+# unambiguously bad. `no_reply` pings on its own because there is no reading of
+# it that is acceptable. Tunable from the environment without a redeploy.
+ALWAYS_ALERT = {"no_reply"}
+
+
+def signals(fields: dict) -> list[tuple[str, str]]:
+    """Every rule this resolve trips, as (id, human explanation)."""
+    if not fields.get("llm_issue"):
+        return []  # no review means no judgement -- stay quiet rather than alert on nulls
+    return [(rid, why) for rid, why, hit in RULES if hit(fields)]
+
 
 def evaluate(fields: dict) -> list[str]:
-    """Return human-readable reasons this resolve is below the bar. Empty = fine."""
-    # No review means no judgement -- stay quiet rather than alert on nulls.
-    if not fields.get("llm_issue"):
+    """Reasons worth interrupting someone for. Empty = don't ping."""
+    hits = signals(fields)
+    if not hits:
         return []
-    return [why for _, why, hit in RULES if hit(fields)]
+    severe = {rid for rid, _ in hits} & ALWAYS_ALERT
+    if len(hits) >= config.ALERT_MIN_SIGNALS or severe:
+        return [why for _, why in hits]
+    return []
 
 
 def _fmt_duration(secs) -> str:

@@ -47,6 +47,10 @@ METABASE_DB_ID = int(os.getenv("METABASE_DB_ID", "7"))
 # --- Alerting ---
 # Slack incoming webhook. Unset = alerting off, everything else unaffected.
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+# How many independent failure signals a resolve must trip before it is worth
+# interrupting someone. 1 fires on ~30% of a normal day, 2 on ~10%. Raise it if
+# the channel gets noisy; no redeploy needed.
+ALERT_MIN_SIGNALS = int(os.getenv("ALERT_MIN_SIGNALS", "2"))
 
 # --- Behaviour ---
 # Model that reviews each resolved transcript. Env-overridable so the model can
