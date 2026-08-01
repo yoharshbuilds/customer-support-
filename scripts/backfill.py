@@ -72,6 +72,12 @@ async def one(client, llm, sem, row, counters) -> None:
             )
             db.update_enrichment(row_id, fields)
             counters["ok"] += 1
+            # A failed model call is swallowed by analyze() so the row still
+            # saves. Without this the run reports 100% success while every
+            # llm_* column is NULL -- which is exactly how a 400 on the
+            # request slipped through unnoticed.
+            if llm is not None and fields.get("llm_issue") is None:
+                counters["llm_failed"] += 1
             print(f"  ok   {conversation_id}  store={fields.get('store')}  "
                   f"fulfil={fields.get('fulfillment')}  order={fields.get('order_id')}  "
                   f"issue={fields.get('llm_issue')}")
@@ -101,7 +107,7 @@ async def main() -> int:
     if llm is None:
         print("  ANTHROPIC_API_KEY unset — llm_* columns will be null")
 
-    counters = {"ok": 0, "failed": 0, "duplicate": 0}
+    counters = {"ok": 0, "failed": 0, "duplicate": 0, "llm_failed": 0}
     sem = asyncio.Semaphore(args.concurrency)
     t0 = time.time()
     async with httpx.AsyncClient(timeout=60) as client:
@@ -110,7 +116,7 @@ async def main() -> int:
         await llm.close()
 
     print(f"\n{counters}  in {time.time() - t0:.1f}s")
-    return 1 if counters["failed"] else 0
+    return 1 if (counters["failed"] or counters["llm_failed"]) else 0
 
 
 if __name__ == "__main__":

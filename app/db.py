@@ -78,7 +78,26 @@ ALTER TABLE resolve_events
     ADD COLUMN IF NOT EXISTS is_cross_store          BOOLEAN,
     -- 1 = first time this conversation was resolved, 2+ = it was reopened and
     -- resolved again. Derived at insert, so no reopen webhook is required.
-    ADD COLUMN IF NOT EXISTS resolve_seq             INTEGER;
+    ADD COLUMN IF NOT EXISTS resolve_seq             INTEGER,
+
+    -- Counted, not judged: everything below is derived from the transcript in
+    -- code, so it costs nothing and never varies between runs.
+    ADD COLUMN IF NOT EXISTS msg_private                 INTEGER,
+    ADD COLUMN IF NOT EXISTS max_dead_air_secs           INTEGER,
+    ADD COLUMN IF NOT EXISTS handoffs                    INTEGER,
+    ADD COLUMN IF NOT EXISTS agent_inactive              BOOLEAN,
+    ADD COLUMN IF NOT EXISTS repeated_canned             INTEGER,
+    ADD COLUMN IF NOT EXISTS closed_without_confirmation BOOLEAN,
+    ADD COLUMN IF NOT EXISTS personalised                BOOLEAN,
+
+    -- Judged by the model from the conversation alone.
+    ADD COLUMN IF NOT EXISTS llm_sentiment_start      TEXT,
+    ADD COLUMN IF NOT EXISTS llm_answered_ask         TEXT,
+    ADD COLUMN IF NOT EXISTS llm_commitment           TEXT,
+    ADD COLUMN IF NOT EXISTS llm_empathy              TEXT,
+    ADD COLUMN IF NOT EXISTS llm_proactive            TEXT,
+    ADD COLUMN IF NOT EXISTS llm_escalation_risk      BOOLEAN,
+    ADD COLUMN IF NOT EXISTS llm_escalation_handled   BOOLEAN;
 
 ALTER TABLE order_dim
     ADD COLUMN IF NOT EXISTS n_batches      INTEGER,
@@ -319,6 +338,11 @@ BREAKDOWN_COLUMNS = {
     "llm_issue",
     "llm_resolution",
     "llm_sentiment",
+    "llm_sentiment_start",
+    "llm_answered_ask",
+    "llm_commitment",
+    "llm_empathy",
+    "llm_proactive",
     "priority",
     "is_cross_store",
 }
@@ -347,6 +371,7 @@ def breakdown(f: dict, column: str, issue_column: str = "issue_type",
 SERIES_COLUMNS = {
     "llm_issue", "issue_type", "fulfillment", "store",
     "agent_name", "resolver_agent_name", "llm_resolution", "llm_sentiment",
+    "llm_answered_ask", "llm_commitment", "llm_empathy",
 }
 
 
@@ -391,7 +416,7 @@ def median_by_day(f: dict, series_column: str, top_n: int,
 SORTABLE = {
     "resolved_at", "resolution_secs", "first_response_secs", "agent_name",
     "resolver_agent_name", "issue_type", "llm_issue", "store", "fulfillment",
-    "order_id", "msg_total", "resolve_seq",
+    "order_id", "msg_total", "resolve_seq", "max_dead_air_secs", "handoffs",
 }
 
 
@@ -412,8 +437,12 @@ def tickets(f: dict, limit: int = 100, offset: int = 0,
                    issue_type, priority,
                    llm_issue, llm_resolution, llm_sentiment, llm_escalated,
                    llm_root_cause, llm_summary,
-                   msg_total, msg_user, msg_agent,
+                   msg_total, msg_user, msg_agent, msg_private,
                    sla_response_breached, sla_resolution_breached,
+                   max_dead_air_secs, handoffs, agent_inactive, repeated_canned,
+                   closed_without_confirmation, personalised,
+                   llm_sentiment_start, llm_answered_ask, llm_commitment,
+                   llm_empathy, llm_proactive, llm_escalation_risk, llm_escalation_handled,
                    resolve_seq, enriched_at
               FROM resolve_events {_filter_sql(issue_column)}
              ORDER BY {sort} {dirn} NULLS LAST, id DESC

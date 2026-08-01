@@ -117,13 +117,15 @@ async def enrich(
     agent_name = await freshchat.fetch_agent_name(client, agent_id)
     resolver_id = _walk(payload_actor, "actor_id") if payload_actor else None
     resolver_name = await freshchat.fetch_agent_name(client, resolver_id) if resolver_id else None
-    cust_ref = await freshchat.fetch_customer_ref(client, conv.get("user_id"))
+    # The name is used only to test whether the agent addressed the customer by
+    # name; it is discarded here and never reaches the database.
+    cust_ref, cust_name = await freshchat.fetch_customer(client, conv.get("user_id"))
 
     # One fetch, two consumers: the order-id regex and the LLM transcript.
     messages = await freshchat.fetch_messages(client, conversation_id)
     order_id = freshchat.find_order_id(messages)
 
-    metrics = freshchat.conversation_metrics(messages, created)
+    metrics = freshchat.conversation_metrics(messages, created, customer_name=cust_name)
     review = await analyze.analyze(llm, analyze.render_transcript(messages)) if llm else None
 
     # The model reads the whole thread, so it catches order ids phrased in ways
@@ -161,8 +163,17 @@ async def enrich(
         # LLM review — all None when no key is configured or the call failed,
         # so the dashboard degrades to the structured fields rather than breaking.
         "llm_issue": (review or {}).get("issue"),
-        "llm_resolution": (review or {}).get("resolution"),
-        "llm_sentiment": (review or {}).get("sentiment"),
+        "llm_resolution": (review or {}).get("outcome"),
+        # llm_sentiment keeps meaning "how the customer left", so existing
+        # filters and charts stay valid now that we capture both ends.
+        "llm_sentiment": (review or {}).get("sentiment_end"),
+        "llm_sentiment_start": (review or {}).get("sentiment_start"),
+        "llm_answered_ask": (review or {}).get("answered_the_ask"),
+        "llm_commitment": (review or {}).get("commitment"),
+        "llm_empathy": (review or {}).get("empathy"),
+        "llm_proactive": ",".join((review or {}).get("proactive") or []) or None,
+        "llm_escalation_risk": (review or {}).get("escalation_risk"),
+        "llm_escalation_handled": (review or {}).get("escalation_handled"),
         "llm_escalated": (review or {}).get("escalated"),
         "llm_root_cause": (review or {}).get("root_cause"),
         "llm_summary": (review or {}).get("summary"),

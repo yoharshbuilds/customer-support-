@@ -17,7 +17,7 @@ import logging
 
 from anthropic import AsyncAnthropic
 
-from . import config
+from . import config, freshchat
 
 log = logging.getLogger(__name__)
 
@@ -28,26 +28,73 @@ SYSTEM = """You review resolved customer-support chats for Plazza, an Indian \
 online pharmacy that delivers medicines from two Bangalore dark stores \
 (Yemalur and Bellandur).
 
-You will be given the full transcript of one conversation that a support agent \
-has just marked resolved. Read it and report what actually happened.
+You are given one conversation that an agent has just marked resolved. Judge \
+it from the conversation alone. You are deliberately given no category tag, no \
+SLA verdict, and no system events -- form your own view from what was said.
 
-Guidance:
-- `issue` is what the customer's problem really was, not what the agent tagged \
-it as. Agents pick tags in a hurry and frequently default to a generic one.
-- `resolution` distinguishes a real fix from a close. "deflected" means the \
-agent closed without solving (told the customer to wait, to reorder, or handed \
-off with no outcome). "no_customer_response" means the customer stopped \
-replying before anything was resolved.
-- `order_ids` must be copied verbatim from the transcript. Include every \
-CART-style id you see, in any message. Empty list if there are none. Never \
-invent or complete a partial id.
-- `sentiment` is the customer's state at the END of the chat.
-- `escalated` is true if the agent handed off to another team, store, or \
-delivery partner rather than resolving it themselves.
-- `root_cause` and `summary` are one short sentence each, plain factual English.
+Lines marked "internal note (staff only, customer never saw this)" are notes \
+between staff. They are evidence of what the agent did behind the scenes, but \
+they were NEVER shown to the customer. Never treat a note as something the \
+customer was told.
 
-Report only what the transcript supports. If something is genuinely unclear, \
-prefer the "unclear"/"other" option over guessing."""
+Definitions:
+
+- `issue`: what the customer's problem actually was. Agents tag in a hurry and \
+default to generic categories; ignore how it might have been labelled.
+
+- `outcome`: did the customer leave with their problem solved?
+  * resolved - the problem was actually fixed or fully answered.
+  * partially_resolved - part of it was handled, part left open.
+  * deflected - closed without solving: told to wait, to reorder, to consult \
+someone, or handed off with no outcome reached in this chat.
+  * no_customer_response - the customer stopped replying before anything was \
+resolved.
+
+- `answered_the_ask`: did the agent address what the customer actually asked, \
+as opposed to something adjacent? A customer asking "when will it arrive" who \
+is told "it is in the picking stage" was NOT given a time.
+
+- `commitment`: the most specific promise the agent made about what happens \
+next. "before 11:20 PM" or "by end of day" is specific_time. "will be updated \
+in the app", "shortly", "on priority" is vague. No forward-looking statement at \
+all is none.
+
+- `empathy`:
+  * specific_to_stake - acknowledged the particular thing this customer said \
+was at risk (needing medicine urgently, waiting up at night, a missed dose).
+  * scripted - polite apology language only, interchangeable between chats.
+  * absent - no acknowledgement of the customer's position.
+
+- `proactive`: things the agent did beyond answering the immediate question. \
+Include only what the transcript evidences. Empty list if none.
+  * chased_internally - contacted another team/person to get an answer \
+(internal notes are valid evidence of this).
+  * verified_outcome - checked back and confirmed the thing actually happened.
+  * offered_alternative - proposed another route when the first failed.
+  * followed_up_unprompted - returned with an update the customer did not ask for.
+
+- `sentiment_start` / `sentiment_end`: the customer's mood in their opening \
+messages, and in their final ones. If the customer never wrote enough to tell, \
+use neutral.
+
+- `escalation_risk`: true if the customer expressed anger, threatened to \
+complain publicly or to leave, or repeated the same demand with rising urgency.
+- `escalation_handled`: true only if such a moment occurred AND the agent \
+defused it. False when there was risk and it was ignored. False when there was \
+no risk.
+
+- `escalated`: the agent handed the case to another team, store, or delivery \
+partner rather than concluding it themselves.
+
+- `order_ids`: copy CART-style ids verbatim from the transcript, any message. \
+Empty list if none. Never invent or complete a partial id.
+
+- `root_cause`: why this contact happened at all, in one factual sentence. \
+Describe the underlying operational cause, not the customer's phrasing.
+- `summary`: one sentence on what happened and how it ended.
+
+Report only what the transcript supports. Where genuinely unclear, choose the \
+weakest option ("other", "none", "absent") rather than guessing generously."""
 
 SCHEMA = {
     "type": "object",
@@ -71,11 +118,25 @@ SCHEMA = {
                 "other",
             ],
         },
-        "resolution": {
+        "outcome": {
             "type": "string",
             "enum": ["resolved", "partially_resolved", "deflected", "no_customer_response"],
         },
-        "sentiment": {"type": "string", "enum": ["positive", "neutral", "negative"]},
+        "answered_the_ask": {"type": "string", "enum": ["fully", "partly", "no"]},
+        "commitment": {"type": "string", "enum": ["specific_time", "vague", "none"]},
+        "empathy": {"type": "string", "enum": ["specific_to_stake", "scripted", "absent"]},
+        "proactive": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["chased_internally", "verified_outcome",
+                         "offered_alternative", "followed_up_unprompted"],
+            },
+        },
+        "sentiment_start": {"type": "string", "enum": ["positive", "neutral", "negative"]},
+        "sentiment_end": {"type": "string", "enum": ["positive", "neutral", "negative"]},
+        "escalation_risk": {"type": "boolean"},
+        "escalation_handled": {"type": "boolean"},
         "escalated": {"type": "boolean"},
         "order_ids": {"type": "array", "items": {"type": "string"}},
         "root_cause": {"type": "string"},
@@ -83,8 +144,15 @@ SCHEMA = {
     },
     "required": [
         "issue",
-        "resolution",
-        "sentiment",
+        "outcome",
+        "answered_the_ask",
+        "commitment",
+        "empathy",
+        "proactive",
+        "sentiment_start",
+        "sentiment_end",
+        "escalation_risk",
+        "escalation_handled",
         "escalated",
         "order_ids",
         "root_cause",
@@ -95,12 +163,26 @@ SCHEMA = {
 
 
 def render_transcript(messages: list[dict]) -> str:
-    """Flatten Freshchat messages (oldest first) into a readable transcript."""
+    """Flatten Freshchat messages (oldest first) into a readable transcript.
+
+    Two deliberate exclusions, so the model judges the conversation and nothing
+    else:
+
+    * **System lines are dropped entirely.** They carry Freshchat's own
+      verdicts -- ``"SLA Policy" Response SLA breached``, ``marked resolved
+      by`` -- and leaving them in invites the model to restate Freshchat's
+      opinion instead of forming its own. Everything factual in them
+      (handoffs, SLA flags, timings) is computed in ``conversation_metrics``.
+    * **Private notes are labelled, not disguised.** They arrive as
+      ``actor_type='agent'`` and used to render as ordinary replies, so the
+      model read staff-only notes as things the customer was told.
+
+    The agent's own ``cf_type`` tag is never passed in at all.
+    """
     lines: list[str] = []
     for m in messages:
-        who = m.get("actor_type", "?")
-        if m.get("message_type") == "system":
-            who = "system"
+        if freshchat.is_system(m):
+            continue
         parts = []
         for p in m.get("message_parts") or []:
             if "text" in p:
@@ -110,8 +192,18 @@ def render_transcript(messages: list[dict]) -> str:
             elif "file" in p:
                 parts.append("[file attached]")
         body = " ".join(x for x in parts if x)
-        if body:
-            lines.append(f"[{(m.get('created_time') or '')[:19]}] {who}: {body}")
+        if not body:
+            continue
+
+        if freshchat.is_private_note(m):
+            who = "internal note (staff only, customer never saw this)"
+        elif m.get("actor_type") == "user":
+            who = "customer"
+        elif m.get("actor_type") == "bot":
+            who = "automated bot"
+        else:
+            who = "agent"
+        lines.append(f"[{(m.get('created_time') or '')[:19]}] {who}: {body}")
 
     if len(lines) > MAX_MESSAGES:
         head = MAX_MESSAGES // 2
@@ -128,11 +220,12 @@ async def analyze(client: AsyncAnthropic, transcript: str) -> dict | None:
         resp = await client.messages.create(
             model=MODEL,
             max_tokens=2000,
-            # Classification, not prose. At the default temperature the same
-            # transcript came back `order_cancellation` on one run and
-            # `order_delay` on the next -- which would make the issue breakdown
-            # shift under you on a re-run rather than reflecting real change.
-            temperature=0,
+            # NOTE: do not add `temperature` here. Sonnet 5 rejects it with a
+            # 400 ("`temperature` is deprecated for this model"), and because
+            # analyze() swallows errors that fails silently -- every llm_*
+            # column comes back NULL while enrichment still reports success.
+            # Run-to-run stability comes from the enum schema and from the
+            # explicit definitions in SYSTEM instead.
             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
             messages=[{"role": "user", "content": f"<transcript>\n{transcript}\n</transcript>"}],
