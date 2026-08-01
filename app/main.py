@@ -30,6 +30,12 @@ _llm: AsyncAnthropic | None = None
 # enrichment silently never ran, and only the 120s sweeper filled it in.
 _inflight: set[asyncio.Task] = set()
 
+# In-memory tally of what the webhook endpoint has seen since boot. Exposed on
+# /healthz so "is Freshchat calling us at all?" can be answered without reading
+# the host's logs -- a question that has cost several round trips already.
+# Resets on restart, which is fine: last_webhook_at is the load-bearing field.
+_hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0, "last_at": None, "last_action": None}
+
 
 def _spawn(coro) -> None:
     task = asyncio.create_task(coro)
@@ -45,6 +51,11 @@ def _log_task_exception(task: asyncio.Task) -> None:
     exc = task.exception()
     if exc is not None:
         log.error("background task died: %r", exc, exc_info=exc)
+
+
+def _walk_action(payload: dict) -> str | None:
+    """Best-effort action name, for the /healthz tally."""
+    return enrich._walk(payload, "action")
 
 
 async def _broadcast(kind: str, data: dict) -> None:
@@ -124,6 +135,8 @@ async def freshchat_webhook(request: Request):
     # Read the raw bytes first: the RSA signature covers the exact body, so it
     # must be verified before anything re-serializes the JSON.
     raw = await request.body()
+    _hits["total"] += 1
+    _hits["last_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # Fail closed. With no signature key and no URL secret this endpoint would
     # accept anything from anyone, and forged resolves are indistinguishable
@@ -160,12 +173,14 @@ async def freshchat_webhook(request: Request):
             {k: v for k, v in request.headers.items()
              if k.lower().startswith(("x-", "user-agent", "content-type"))},
         )
+        _hits["rejected"] += 1
         raise HTTPException(status_code=401, detail="bad webhook signature")
 
     if config.WEBHOOK_SECRET:
         supplied = request.query_params.get("secret") or request.headers.get("x-webhook-secret") or ""
         if not hmac.compare_digest(supplied, config.WEBHOOK_SECRET):
             log.warning("webhook REJECTED: ?secret= did not match (supplied %d chars)", len(supplied))
+            _hits["rejected"] += 1
             raise HTTPException(status_code=401, detail="bad webhook secret")
 
     try:
@@ -178,6 +193,8 @@ async def freshchat_webhook(request: Request):
         # a Status -> Resolved change with an action we do not recognise, this
         # line is the only place the real shape will ever appear -- the request
         # otherwise succeeds with 200 and vanishes. Ids only, no customer data.
+        _hits["ignored"] += 1
+        _hits["last_action"] = (_walk_action(payload) or "")[:60]
         log.warning("webhook IGNORED (not recognised as a resolution): %s",
                     json.dumps(payload)[:1200])
         return {"ok": True, "ignored": "not a resolution event"}
@@ -194,6 +211,8 @@ async def freshchat_webhook(request: Request):
 
     # Store first, enrich after: a Freshchat or Metabase outage must never cost
     # us the event, and Freshchat gets its 200 without waiting on those calls.
+    _hits["accepted"] += 1
+    _hits["last_action"] = (_walk_action(payload) or "")[:60]
     log.info("webhook ACCEPTED: conversation %s resolved at %s", conversation_id, resolved_at)
     row_id = db.insert_event(
         {
@@ -388,6 +407,7 @@ def healthz():
         "model": enrich.analyze.MODEL,
         "llm": _llm is not None,
         # Whether Slack alerting is wired, without exposing the webhook URL.
+        "webhook_hits": dict(_hits),
         "alerts": bool(config.SLACK_WEBHOOK_URL),
         "alert_bar": config.ALERT_MIN_SIGNALS,
     }
