@@ -137,12 +137,23 @@ async def freshchat_webhook(request: Request):
                        "WEBHOOK_SECRET (or ALLOW_UNVERIFIED_WEBHOOK=true to test locally)",
             )
 
-    if not signature.verify(raw, request.headers.get("x-freshchat-signature")):
+    # Both rejections below return a bare 401, which in the access log is
+    # indistinguishable from the other. Say which check failed, and whether the
+    # signature header was even present -- otherwise a key-format mismatch and a
+    # wrong ?secret= look identical from outside, and silence from Freshchat is
+    # impossible to tell apart from nobody having clicked Resolve.
+    sig_header = request.headers.get("x-freshchat-signature")
+    if not signature.verify(raw, sig_header):
+        log.warning(
+            "webhook REJECTED: signature check failed (header %s, body %d bytes)",
+            "present" if sig_header else "MISSING", len(raw),
+        )
         raise HTTPException(status_code=401, detail="bad webhook signature")
 
     if config.WEBHOOK_SECRET:
         supplied = request.query_params.get("secret") or request.headers.get("x-webhook-secret") or ""
         if not hmac.compare_digest(supplied, config.WEBHOOK_SECRET):
+            log.warning("webhook REJECTED: ?secret= did not match (supplied %d chars)", len(supplied))
             raise HTTPException(status_code=401, detail="bad webhook secret")
 
     try:
@@ -151,6 +162,8 @@ async def freshchat_webhook(request: Request):
         raise HTTPException(status_code=400, detail="body is not valid JSON")
 
     if not enrich.is_resolution(payload):
+        log.info("webhook ignored: action=%r is not a resolution",
+                 (payload.get("action") or "")[:40])
         return {"ok": True, "ignored": "not a resolution event"}
 
     conversation_id = enrich.extract_conversation_id(payload)
@@ -165,6 +178,7 @@ async def freshchat_webhook(request: Request):
 
     # Store first, enrich after: a Freshchat or Metabase outage must never cost
     # us the event, and Freshchat gets its 200 without waiting on those calls.
+    log.info("webhook ACCEPTED: conversation %s resolved at %s", conversation_id, resolved_at)
     row_id = db.insert_event(
         {
             "conversation_id": conversation_id,
