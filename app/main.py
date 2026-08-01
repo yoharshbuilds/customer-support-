@@ -34,7 +34,9 @@ _inflight: set[asyncio.Task] = set()
 # /healthz so "is Freshchat calling us at all?" can be answered without reading
 # the host's logs -- a question that has cost several round trips already.
 # Resets on restart, which is fine: last_webhook_at is the load-bearing field.
-_hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0, "last_at": None, "last_action": None}
+_hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
+         "rejected_signature": 0, "rejected_secret": 0,
+         "last_at": None, "last_action": None, "last_reject": None}
 
 
 def _spawn(coro) -> None:
@@ -174,6 +176,11 @@ async def freshchat_webhook(request: Request):
              if k.lower().startswith(("x-", "user-agent", "content-type"))},
         )
         _hits["rejected"] += 1
+        _hits["rejected_signature"] += 1
+        _hits["last_reject"] = (
+            f"signature; header={'yes' if sig_header else 'MISSING'}; "
+            f"bytes={len(raw)}; ua={request.headers.get('user-agent', '?')[:40]}"
+        )
         raise HTTPException(status_code=401, detail="bad webhook signature")
 
     if config.WEBHOOK_SECRET:
@@ -181,6 +188,8 @@ async def freshchat_webhook(request: Request):
         if not hmac.compare_digest(supplied, config.WEBHOOK_SECRET):
             log.warning("webhook REJECTED: ?secret= did not match (supplied %d chars)", len(supplied))
             _hits["rejected"] += 1
+            _hits["rejected_secret"] += 1
+            _hits["last_reject"] = f"secret; supplied={len(supplied)} chars"
             raise HTTPException(status_code=401, detail="bad webhook secret")
 
     try:
