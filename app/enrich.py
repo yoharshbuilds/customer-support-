@@ -60,7 +60,20 @@ def is_resolution(payload: dict) -> bool:
     """
     action = (_walk(payload, "action") or "").lower()
     if action:
-        return "resolution" in action or "resolved" in action
+        if "resolution" in action or "resolved" in action:
+            return True
+        # Agents close a chat by setting Status -> Resolved in the conversation
+        # properties panel, not via a dedicated Resolve button. Freshchat may
+        # report that as a status-change action rather than a resolution one,
+        # and dropping it would lose every real resolve while still returning
+        # 200. Accept a status change only when it actually lands on resolved.
+        if "status" in action or "update" in action:
+            return (_walk(payload, "status") or "").lower() == "resolved"
+        # Anything else with an explicit action (message_create,
+        # conversation_assignment, conversation_reopen) is not a resolve. This
+        # is the check that stops a follow-up message on an already-resolved
+        # chat from counting as a second closure.
+        return False
 
     # No `action` field at all (custom automation / unknown shape): fall back to
     # an explicit resolve container, then to a bare resolved status.

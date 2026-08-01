@@ -174,8 +174,12 @@ async def freshchat_webhook(request: Request):
         raise HTTPException(status_code=400, detail="body is not valid JSON")
 
     if not enrich.is_resolution(payload):
-        log.info("webhook ignored: action=%r is not a resolution",
-                 (payload.get("action") or "")[:40])
+        # Log the whole payload, not just the action name. If Freshchat labels
+        # a Status -> Resolved change with an action we do not recognise, this
+        # line is the only place the real shape will ever appear -- the request
+        # otherwise succeeds with 200 and vanishes. Ids only, no customer data.
+        log.warning("webhook IGNORED (not recognised as a resolution): %s",
+                    json.dumps(payload)[:1200])
         return {"ok": True, "ignored": "not a resolution event"}
 
     conversation_id = enrich.extract_conversation_id(payload)
