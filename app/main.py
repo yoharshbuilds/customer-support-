@@ -36,7 +36,11 @@ _inflight: set[asyncio.Task] = set()
 # Resets on restart, which is fine: last_webhook_at is the load-bearing field.
 _hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
          "rejected_signature": 0, "rejected_secret": 0, "accepted_unsigned": 0,
-         "last_at": None, "last_action": None, "last_reject": None}
+         "last_at": None, "last_action": None, "last_reject": None,
+         # Composition of the traffic. One webhook URL receives every event
+         # type Freshchat emits, so knowing the mix explains both the volume
+         # and how much of it we discard.
+         "by_action": {}}
 
 # Last few rejected requests, kept in memory so the exact (signature, body)
 # pair can be replayed offline against the public key. Bounded, never
@@ -244,7 +248,9 @@ async def freshchat_webhook(request: Request):
         # line is the only place the real shape will ever appear -- the request
         # otherwise succeeds with 200 and vanishes. Ids only, no customer data.
         _hits["ignored"] += 1
-        _hits["last_action"] = (_walk_action(payload) or "")[:60]
+        act = (_walk_action(payload) or "unknown")[:60]
+        _hits["last_action"] = act
+        _hits["by_action"][act] = _hits["by_action"].get(act, 0) + 1
         log.warning("webhook IGNORED (not recognised as a resolution): %s",
                     json.dumps(payload)[:1200])
         return {"ok": True, "ignored": "not a resolution event"}
@@ -262,7 +268,9 @@ async def freshchat_webhook(request: Request):
     # Store first, enrich after: a Freshchat or Metabase outage must never cost
     # us the event, and Freshchat gets its 200 without waiting on those calls.
     _hits["accepted"] += 1
-    _hits["last_action"] = (_walk_action(payload) or "")[:60]
+    act = (_walk_action(payload) or "unknown")[:60]
+    _hits["last_action"] = act
+    _hits["by_action"][act] = _hits["by_action"].get(act, 0) + 1
     log.info("webhook ACCEPTED: conversation %s resolved at %s", conversation_id, resolved_at)
     row_id = db.insert_event(
         {
