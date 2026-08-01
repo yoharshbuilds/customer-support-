@@ -10,12 +10,19 @@ never reaches here, so loading a historical day cannot fire hundreds of pings.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import httpx
 
 from . import config
 
 log = logging.getLogger(__name__)
+
+# Delivery tally. Whether a Slack message actually left the building is
+# otherwise only visible in the host's logs, and "the rules would have fired"
+# is not the same claim as "the customer-facing alert was delivered".
+STATS = {"sent": 0, "failed": 0, "suppressed_below_bar": 0,
+         "last_sent_at": None, "last_error": None}
 
 # Each rule: (id, human explanation, predicate). The explanation is what lands
 # in Slack under "what went wrong", so it is written for a person skimming on a
@@ -133,10 +140,16 @@ async def maybe_alert(client: httpx.AsyncClient, conversation_id: str, fields: d
         return
     reasons = evaluate(fields)
     if not reasons:
+        if signals(fields):
+            STATS["suppressed_below_bar"] += 1
         return
     try:
         r = await client.post(config.SLACK_WEBHOOK_URL, json=build_message(fields, reasons), timeout=15)
         r.raise_for_status()
+        STATS["sent"] += 1
+        STATS["last_sent_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         log.info("alerted on %s: %s", conversation_id, "; ".join(reasons))
     except Exception as e:  # noqa: BLE001 — a failed alert must never lose the row
+        STATS["failed"] += 1
+        STATS["last_error"] = str(e)[:200]
         log.warning("slack alert failed for %s: %s", conversation_id, e)

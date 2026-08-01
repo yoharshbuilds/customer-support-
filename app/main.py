@@ -479,6 +479,7 @@ def healthz():
         # Whether Slack alerting is wired, without exposing the webhook URL.
         "webhook_hits": dict(_hits),
         "alerts": bool(config.SLACK_WEBHOOK_URL),
+        "alert_delivery": dict(alerts.STATS),
         "alert_bar": config.ALERT_MIN_SIGNALS,
     }
 
