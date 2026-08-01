@@ -38,6 +38,11 @@ _hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
          "rejected_signature": 0, "rejected_secret": 0,
          "last_at": None, "last_action": None, "last_reject": None}
 
+# Last few rejected requests, kept in memory so the exact (signature, body)
+# pair can be replayed offline against the public key. Bounded, never
+# persisted, and only readable with the webhook secret.
+_reject_samples: list[dict] = []
+
 
 def _spawn(coro) -> None:
     task = asyncio.create_task(coro)
@@ -177,6 +182,14 @@ async def freshchat_webhook(request: Request):
         )
         _hits["rejected"] += 1
         _hits["rejected_signature"] += 1
+        _reject_samples.append({
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "signature": sig_header,
+            "body": raw.decode("utf-8", "replace"),
+            "headers": {k: v for k, v in request.headers.items()
+                        if k.lower().startswith(("x-", "user-agent", "content-type"))},
+        })
+        del _reject_samples[:-5]
         _hits["last_reject"] = (
             f"signature; header={'yes' if sig_header else 'MISSING'}; "
             f"bytes={len(raw)}; ua={request.headers.get('user-agent', '?')[:40]}"
@@ -399,6 +412,18 @@ async def stream():
 # <1.0 added it to every GET route automatically and 1.x does not, so uptime
 # monitors that probe with HEAD (UptimeRobot does by default) got a 405 and
 # reported the service down while it was perfectly healthy.
+@app.get("/debug/rejects")
+def debug_rejects(secret: str = Query("")):
+    """The last few rejected webhooks, for debugging signature verification.
+
+    Gated on the webhook secret: these payloads are ids only, but there is no
+    reason to serve them to the open internet.
+    """
+    if not config.WEBHOOK_SECRET or not hmac.compare_digest(secret, config.WEBHOOK_SECRET):
+        raise HTTPException(status_code=404, detail="not found")
+    return {"count": len(_reject_samples), "samples": _reject_samples}
+
+
 @app.api_route("/healthz", methods=["GET", "HEAD"])
 def healthz():
     with db.cursor() as cur:

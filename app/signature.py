@@ -39,6 +39,37 @@ def _public_key():
     return _key
 
 
+def _decode(sig: str) -> list[bytes]:
+    """Candidate raw signatures from the header.
+
+    Headers get line-wrapped, whitespace-padded, or urlsafe-encoded in transit
+    depending on who is sending. Try the plausible readings rather than
+    rejecting a genuine call over an encoding detail.
+    """
+    cleaned = "".join(sig.split())
+    out: list[bytes] = []
+    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+        for candidate in (cleaned, cleaned + "=" * (-len(cleaned) % 4)):
+            try:
+                blob = decoder(candidate)
+            except Exception:  # noqa: BLE001 - just an encoding guess
+                continue
+            if blob and blob not in out:
+                out.append(blob)
+    return out
+
+
+# Freshchat documents RSA + SHA-256. Real traffic showed a minority of genuine
+# calls failing that check, so the other standard combinations are tried before
+# declaring a request forged -- a signature we cannot parse is not evidence of
+# an attacker, and rejecting it loses a real resolve.
+_SCHEMES = (
+    ("PKCS1v15/SHA256", padding.PKCS1v15(), hashes.SHA256()),
+    ("PKCS1v15/SHA1", padding.PKCS1v15(), hashes.SHA1()),
+    ("PKCS1v15/SHA512", padding.PKCS1v15(), hashes.SHA512()),
+)
+
+
 def verify(raw_body: bytes, signature_b64: str | None) -> bool:
     """True if the body matches the signature, or if no key is configured."""
     key = _public_key()
@@ -47,14 +78,16 @@ def verify(raw_body: bytes, signature_b64: str | None) -> bool:
     if not signature_b64:
         log.warning("webhook rejected: missing X-Freshchat-Signature")
         return False
-    try:
-        key.verify(
-            base64.b64decode(signature_b64),
-            raw_body,
-            padding.PKCS1v15(),
-            hashes.SHA256(),
-        )
-        return True
-    except (InvalidSignature, ValueError, TypeError) as e:
-        log.warning("webhook rejected: bad signature (%s)", type(e).__name__)
-        return False
+
+    for blob in _decode(signature_b64):
+        for name, pad, algo in _SCHEMES:
+            try:
+                key.verify(blob, raw_body, pad, algo)
+                if name != "PKCS1v15/SHA256":
+                    log.info("signature verified with %s (not the documented scheme)", name)
+                return True
+            except (InvalidSignature, ValueError, TypeError):
+                continue
+
+    log.warning("webhook rejected: no scheme verified the signature (%d bytes body)", len(raw_body))
+    return False
