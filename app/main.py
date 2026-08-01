@@ -14,7 +14,7 @@ from anthropic import AsyncAnthropic
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import config, db, enrich, signature
+from . import alerts, config, db, enrich, signature
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -63,6 +63,9 @@ async def _enrich_row(row_id: int, conversation_id: str, resolved_at: datetime,
         fields = await enrich.enrich(_client, conversation_id, resolved_at, llm=_llm, payload_actor=actor)
         db.update_enrichment(row_id, fields)
         await _broadcast("resolved", {"conversation_id": conversation_id, **fields})
+        # Last, and deliberately after the row is safely stored: a Slack outage
+        # must never cost us the event.
+        await alerts.maybe_alert(_client, conversation_id, fields)
     except Exception as e:  # noqa: BLE001 - row stays pending and the sweeper retries
         log.warning("enrichment failed for %s: %s", conversation_id, e)
         db.update_enrichment(row_id, {}, error=str(e)[:500])

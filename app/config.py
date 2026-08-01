@@ -44,6 +44,10 @@ METABASE_URL = os.getenv("METABASE_URL", "").strip().rstrip("/")
 METABASE_API_KEY = os.getenv("METABASE_API_KEY", "").strip()
 METABASE_DB_ID = int(os.getenv("METABASE_DB_ID", "7"))
 
+# --- Alerting ---
+# Slack incoming webhook. Unset = alerting off, everything else unaffected.
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+
 # --- Behaviour ---
 # Model that reviews each resolved transcript. Env-overridable so the model can
 # be changed from the Render dashboard without a redeploy of new code.
