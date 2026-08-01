@@ -357,6 +357,9 @@ def healthz():
         "subscribers": len(_subscribers),
         "model": enrich.analyze.MODEL,
         "llm": _llm is not None,
+        # Whether Slack alerting is wired, without exposing the webhook URL.
+        "alerts": bool(config.SLACK_WEBHOOK_URL),
+        "alert_bar": config.ALERT_MIN_SIGNALS,
     }
 
 
