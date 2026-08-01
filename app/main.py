@@ -144,9 +144,21 @@ async def freshchat_webhook(request: Request):
     # impossible to tell apart from nobody having clicked Resolve.
     sig_header = request.headers.get("x-freshchat-signature")
     if not signature.verify(raw, sig_header):
+        # Log the signature and the exact body on rejection. Neither is secret:
+        # the signature is over this one body and cannot be replayed elsewhere,
+        # and a resolution payload carries only ids -- no customer data. With
+        # both, the verification can be reproduced offline against the public
+        # key and the algorithm corrected, instead of guessing across redeploys.
         log.warning(
-            "webhook REJECTED: signature check failed (header %s, body %d bytes)",
-            "present" if sig_header else "MISSING", len(raw),
+            "webhook REJECTED: signature check failed\n"
+            "  sig-header: %s\n"
+            "  body (%d bytes): %s\n"
+            "  other headers: %s",
+            sig_header or "MISSING",
+            len(raw),
+            raw[:800].decode("utf-8", "replace"),
+            {k: v for k, v in request.headers.items()
+             if k.lower().startswith(("x-", "user-agent", "content-type"))},
         )
         raise HTTPException(status_code=401, detail="bad webhook signature")
 
