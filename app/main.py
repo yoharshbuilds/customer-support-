@@ -35,7 +35,7 @@ _inflight: set[asyncio.Task] = set()
 # the host's logs -- a question that has cost several round trips already.
 # Resets on restart, which is fine: last_webhook_at is the load-bearing field.
 _hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
-         "rejected_signature": 0, "rejected_secret": 0,
+         "rejected_signature": 0, "rejected_secret": 0, "accepted_unsigned": 0,
          "last_at": None, "last_action": None, "last_reject": None}
 
 # Last few rejected requests, kept in memory so the exact (signature, body)
@@ -162,8 +162,36 @@ async def freshchat_webhook(request: Request):
     # signature header was even present -- otherwise a key-format mismatch and a
     # wrong ?secret= look identical from outside, and silence from Freshchat is
     # impossible to tell apart from nobody having clicked Resolve.
+    # The URL secret is checked FIRST and is the factor we actually rely on.
+    #
+    # Freshchat's signature proved unreliable in production: a captured failing
+    # sample verified as PKCS#1 v1.5 + SHA-256 (exactly what we implement) with
+    # the right key, but the digest it signed matched no representation of the
+    # body it sent -- not the raw bytes, compact JSON, sorted JSON, or any
+    # subset. Their signature simply does not cover their payload for some
+    # events. Requiring it would discard genuine resolves.
+    #
+    # The secret is 64 random characters, known only to Freshchat and us and
+    # sent over TLS -- the same model as a webhook URL token. Set
+    # REQUIRE_SIGNATURE=true to demand both again if Freshchat ever fixes this.
+    if config.WEBHOOK_SECRET:
+        supplied = request.query_params.get("secret") or request.headers.get("x-webhook-secret") or ""
+        if not hmac.compare_digest(supplied, config.WEBHOOK_SECRET):
+            _hits["rejected"] += 1
+            _hits["rejected_secret"] += 1
+            _hits["last_reject"] = f"secret; supplied={len(supplied)} chars"
+            log.warning("webhook REJECTED: ?secret= did not match (supplied %d chars)", len(supplied))
+            raise HTTPException(status_code=401, detail="bad webhook secret")
+
     sig_header = request.headers.get("x-freshchat-signature")
-    if not signature.verify(raw, sig_header):
+    sig_ok = signature.verify(raw, sig_header)
+    if not sig_ok and not config.REQUIRE_SIGNATURE and config.WEBHOOK_SECRET:
+        _hits["accepted_unsigned"] += 1
+        log.warning("webhook signature did not verify; accepted on URL secret alone "
+                    "(body %d bytes, header %s)", len(raw), "present" if sig_header else "MISSING")
+        sig_ok = True
+
+    if not sig_ok:
         # Log the signature and the exact body on rejection. Neither is secret:
         # the signature is over this one body and cannot be replayed elsewhere,
         # and a resolution payload carries only ids -- no customer data. With

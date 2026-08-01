@@ -38,6 +38,11 @@ FRESHCHAT_PUBLIC_KEY = os.getenv("FRESHCHAT_PUBLIC_KEY", "")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 # Escape hatch for local testing only. Never set this on a public deployment.
 ALLOW_UNVERIFIED_WEBHOOK = os.getenv("ALLOW_UNVERIFIED_WEBHOOK", "").lower() in ("1", "true", "yes")
+# Freshchat's signature does not reliably cover the body it sends (verified
+# against a captured sample: right key, right scheme, digest matched nothing).
+# Default off so a broken signature cannot discard a genuine resolve; the URL
+# secret remains mandatory. Turn on if Freshchat ever fixes their signing.
+REQUIRE_SIGNATURE = os.getenv("REQUIRE_SIGNATURE", "").lower() in ("1", "true", "yes")
 
 # --- Metabase (store + fulfillment enrichment) ---
 METABASE_URL = os.getenv("METABASE_URL", "").strip().rstrip("/")
