@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from . import config, enrich
 
@@ -34,6 +34,13 @@ _AGENT_KEYS = ("agent_id", "actor_id", "user_id", "id")
 # When the change happened, as opposed to when we received it.
 _TIME_KEYS = ("action_time", "occurred_at", "changed_at", "updated_time",
               "updated_at", "timestamp", "created_time", "time")
+# Freshchat tracks login SEPARATELY from availability -- the live /agents API
+# returns both, and agents genuinely sit logged in while UNAVAILABLE (doing admin
+# work, or on a break). Availability answers "ready for chats"; login answers "at
+# work". Captured now even though nothing reads it yet, because we cannot know
+# whether these events even carry it until real payloads arrive, and a column is
+# cheaper than re-deriving from raw later.
+_LOGIN_KEYS = ("login_status", "is_logged_in", "logged_in", "is_online")
 
 
 def is_availability(payload: dict) -> bool:
@@ -134,6 +141,21 @@ def _agent_id(payload: dict) -> str | None:
     return _first(payload, _AGENT_KEYS)
 
 
+def _login_status(payload: dict):
+    """True/False if the payload states whether the agent is logged in, else None.
+
+    None means "the payload did not say", which must stay distinct from False --
+    treating a missing field as logged-out would invent sign-outs.
+    """
+    for k in _LOGIN_KEYS:
+        v = _walk_any(payload, k)
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+            return v.strip().lower() == "true"
+    return None
+
+
 def extract(payload: dict) -> dict:
     """Best-effort structured view of an availability webhook."""
     raw_status = _status_value(payload)
@@ -144,6 +166,7 @@ def extract(payload: dict) -> dict:
         "agent_id": agent_id,
         "raw_status": (raw_status or "")[:60] or None,
         "status": normalise_status(raw_status),
+        "login_status": _login_status(payload),
         "changed_at": changed_at,
         "action": action,
         "raw": payload,
@@ -168,6 +191,13 @@ def _shift_day(ts: datetime, tz) -> str:
     """Which shift day a moment belongs to, matching the activity proxy."""
     local = ts.astimezone(tz)
     return (local - timedelta(hours=config.SHIFT_START_HOUR)).date().isoformat()
+
+
+def _shift_day_end(shift_day: str, tz) -> datetime:
+    """The moment a shift day closes: its start hour, plus 24 hours."""
+    d = date.fromisoformat(shift_day)
+    start_local = datetime.combine(d, time(hour=config.SHIFT_START_HOUR), tzinfo=tz)
+    return (start_local + timedelta(days=1)).astimezone(timezone.utc)
 
 
 def sessions_from_events(events: list[dict], now: datetime, tz) -> list[dict]:
@@ -204,6 +234,20 @@ def sessions_from_events(events: list[dict], now: datetime, tz) -> list[dict]:
 
     for s in out:
         s["shift_day"] = _shift_day(s["start"], tz)
+        # An agent ends a shift by going UNAVAILABLE, which closes the session
+        # cleanly. Someone who instead just walks away leaves it open, and
+        # closing that at "now" billed one agent 64 hours to a single Friday.
+        # Two ceilings, whichever bites first:
+        #   * MAX_SESSION_HOURS, the longest credible single stretch
+        #   * the end of the session's own shift day -- whatever happened, they
+        #     were not still in Friday's shift on Monday
+        # A genuine night shift (22:00->05:00) sits inside its shift-day window,
+        # so this leaves real overnight work untouched.
+        limit = min(s["start"] + timedelta(hours=config.MAX_SESSION_HOURS),
+                    _shift_day_end(s["shift_day"], tz))
+        s["capped"] = s["end"] > limit
+        if s["capped"]:
+            s["end"] = limit
         s["secs"] = max(0.0, (s["end"] - s["start"]).total_seconds())
     return out
 
@@ -214,11 +258,14 @@ def aggregate(sessions: list[dict]) -> dict:
     for s in sessions:
         d = by_day.setdefault(s["shift_day"], {
             "first": s["start"], "last": s["end"], "secs": 0.0,
-            "sessions": 0, "open": False,
+            "sessions": 0, "open": False, "capped": False,
         })
         d["first"] = min(d["first"], s["start"])
         d["last"] = max(d["last"], s["end"])
         d["secs"] += s["secs"]
         d["sessions"] += 1
         d["open"] = d["open"] or s["open"]
+        # Surfaced, not swallowed: a capped day means someone forgot to toggle,
+        # and the hours are a floor rather than a measurement.
+        d["capped"] = d["capped"] or s["capped"]
     return by_day

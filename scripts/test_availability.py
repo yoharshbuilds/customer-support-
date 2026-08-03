@@ -165,6 +165,54 @@ def main() -> int:
         now, IST)
     check("zero-length session dropped", s == [])
 
+    # --- never signed out ------------------------------------------------
+    # An agent ends a shift by going UNAVAILABLE. Someone who just walks away
+    # leaves the session open, and closing it at "now" charged 64 hours to one
+    # Friday before this was capped.
+    stale = availability.sessions_from_events(
+        [ev("2026-07-31T16:30:00", "available")], now, IST)  # Fri 22:00 IST, now = Mon
+    check("abandoned session is capped, not left open-ended",
+          len(stale) == 1 and stale[0]["secs"] <= 12 * 3600 + 1)
+    check("abandoned session is flagged as capped", stale and stale[0]["capped"] is True)
+    check("abandoned session stays on its own shift day",
+          stale and stale[0]["shift_day"] == "2026-07-31")
+
+    # A session cannot spill past the end of its own shift day.
+    spill = availability.sessions_from_events(
+        [ev("2026-08-02T00:30:00", "available")],  # 06:00 IST Aug 2, start of the day
+        _dt("2026-08-03T12:00:00"), IST)
+    check("session cannot outlive its shift day",
+          spill and spill[0]["secs"] <= 12 * 3600 + 1 and spill[0]["capped"])
+
+    # A real night shift must NOT be capped -- it fits inside its shift-day window.
+    night = availability.sessions_from_events(
+        [ev("2026-08-02T16:30:00", "available"), ev("2026-08-02T23:30:00", "unavailable")],
+        now, IST)
+    check("genuine 7h night shift is untouched",
+          night and not night[0]["capped"] and abs(night[0]["secs"] - 7 * 3600) < 1)
+
+    # Going unavailable without logging out is the NORMAL path and must close
+    # the session cleanly -- no logout event involved.
+    clean = availability.sessions_from_events(
+        [ev("2026-08-03T02:00:00", "available"), ev("2026-08-03T08:00:00", "unavailable")],
+        now, IST)
+    check("unavailable closes the shift without any logout",
+          len(clean) == 1 and not clean[0]["open"] and not clean[0]["capped"])
+
+    # --- login status, captured separately from availability ---
+    check("login true is captured", availability._login_status(
+        {"data": {"login_status": True}}) is True)
+    check("login false is captured", availability._login_status(
+        {"data": {"login_status": False}}) is False)
+    check("missing login is None, not False", availability._login_status(
+        {"data": {"availability_status": "AVAILABLE"}}) is None)
+    check("logged in while unavailable is representable", (
+        lambda e: e["status"] == "unavailable" and e["login_status"] is True)(
+            availability.extract({
+                "actor": {"actor_id": "agent-7"}, "action": "agent_availability",
+                "action_time": "2026-08-03T02:00:00.000Z",
+                "data": {"availability_status": "UNAVAILABLE", "login_status": True}})))
+
     # --- aggregate ---
     sess = availability.sessions_from_events(
         [ev("2026-08-03T02:00:00", "available"), ev("2026-08-03T04:00:00", "unavailable"),

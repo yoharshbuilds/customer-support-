@@ -629,6 +629,9 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
                 "overnight": last_local.date() != first_local.date(),
                 "sessions": agg["sessions"],
                 "still_open": agg["open"],
+                # The agent never went unavailable, so the stretch was truncated
+                # at the shift-day end. Hours are a floor, not a measurement.
+                "capped": agg["capped"],
                 "source": "availability",
             }
 

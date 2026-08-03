@@ -79,6 +79,13 @@ SHORT_SHIFT_HOURS = float(os.getenv("SHORT_SHIFT_HOURS", "4"))
 # seats but no shifts, so only this role can be marked absent. Anyone else who
 # resolves chats is still shown -- an Owner does work this queue.
 SUPPORT_ROLE = os.getenv("SUPPORT_ROLE", "Customer Delight").strip()
+# Longest credible single signed-in stretch. Agents end a shift by going
+# UNAVAILABLE, which closes a session cleanly -- but someone who simply walks
+# away leaves the session open, and closing it at "now" charged one agent 64
+# hours to a single Friday. A session is capped at this many hours AND at the end
+# of its own shift day, then flagged, so a forgotten toggle shows up as a data
+# problem instead of as overtime.
+MAX_SESSION_HOURS = float(os.getenv("MAX_SESSION_HOURS", "12"))
 
 
 def _normalize_base(url: str) -> str:

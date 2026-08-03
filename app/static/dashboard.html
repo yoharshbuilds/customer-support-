@@ -259,6 +259,7 @@ tr.new{animation:flash 2.5s ease-out}
         <span>· hours on top, chats resolved below</span>
         <span>· 🌙 shift crossed midnight</span>
         <span>· ● still signed in</span>
+        <span>· ≥ never went unavailable, hours truncated</span>
       </div>
       <div class="scroll"><table id="a_grid"></table></div>
       <div class="foot" id="a_foot"></div>
@@ -524,9 +525,11 @@ function attGrid(){
         const title = real
           ? `Signed in ${c.first}–${c.last}${c.still_open ? ' (still signed in)' : ''}`
             + ` · ${c.sessions} session${c.sessions===1?'':'s'} · ${c.resolves} resolved`
+            + (c.capped ? ' · never went unavailable, so this is truncated at the'
+                        + ' end of the shift day — hours are a floor' : '')
           : `${c.first}–${c.last} (first→last resolve, inferred) · ${c.resolves} resolved`;
         body.push(`<td class="cell" title="${esc(title)}">`
-          + `<span class="pill ${cls}">${c.span_hrs}h${c.overnight?' 🌙':''}`
+          + `<span class="pill ${cls}">${c.capped?'≥':''}${c.span_hrs}h${c.overnight?' 🌙':''}`
           + `<span class="r">${c.resolves}</span></span></td>`);
       } else if (d === ATT.today){
         body.push('<td class="cell"><span class="pill p-nil" title="Shift day still in progress">·</span></td>');

@@ -136,6 +136,12 @@ CREATE TABLE IF NOT EXISTS agent_availability_events (
     -- rather than becoming a second sign-in.
     dedupe_key  TEXT        NOT NULL UNIQUE
 );
+-- Freshchat tracks login separately from availability, and agents do sit logged
+-- in while UNAVAILABLE. Captured so "at work" can eventually be told apart from
+-- "ready for chats". NULL means the payload did not say, which is not the same
+-- as logged out.
+ALTER TABLE agent_availability_events
+    ADD COLUMN IF NOT EXISTS login_status BOOLEAN;
 CREATE INDEX IF NOT EXISTS idx_avail_agent_time
     ON agent_availability_events (agent_id, COALESCE(changed_at, received_at));
 CREATE INDEX IF NOT EXISTS idx_avail_received
@@ -208,9 +214,10 @@ def insert_availability(ev: dict) -> int | None:
         cur.execute(
             """
             INSERT INTO agent_availability_events
-                (agent_id, status, raw_status, changed_at, action, raw, dedupe_key)
-            VALUES (%(agent_id)s, %(status)s, %(raw_status)s, %(changed_at)s,
-                    %(action)s, %(raw)s, %(dedupe_key)s)
+                (agent_id, status, raw_status, login_status, changed_at, action,
+                 raw, dedupe_key)
+            VALUES (%(agent_id)s, %(status)s, %(raw_status)s, %(login_status)s,
+                    %(changed_at)s, %(action)s, %(raw)s, %(dedupe_key)s)
             ON CONFLICT (dedupe_key) DO NOTHING
             RETURNING id
             """,
@@ -218,6 +225,7 @@ def insert_availability(ev: dict) -> int | None:
                 "agent_id": ev.get("agent_id"),
                 "status": ev["status"],
                 "raw_status": ev.get("raw_status"),
+                "login_status": ev.get("login_status"),
                 "changed_at": ev.get("changed_at"),
                 "action": ev.get("action"),
                 "raw": json.dumps(ev.get("raw") or {}),
@@ -274,6 +282,9 @@ def availability_stats() -> dict:
                    COUNT(*) FILTER (WHERE status = 'unknown')   AS unknown_status,
                    COUNT(*) FILTER (WHERE agent_id IS NULL)     AS no_agent_id,
                    COUNT(*) FILTER (WHERE changed_at IS NULL)   AS no_timestamp,
+                   -- If this stays 0, these webhooks do not carry login state and
+                   -- "at work" cannot be separated from "ready for chats".
+                   COUNT(login_status)                          AS with_login_status,
                    MIN(received_at) AS first_at,
                    MAX(received_at) AS last_at
             FROM agent_availability_events
