@@ -167,6 +167,20 @@ CREATE TABLE IF NOT EXISTS agent_message_events (
 );
 CREATE INDEX IF NOT EXISTS idx_amsg_agent_time ON agent_message_events (agent_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_amsg_sent       ON agent_message_events (sent_at DESC);
+
+-- Ticket inflow. The webhook never sends conversation_create -- the by_action
+-- tally has only message_create, assignment, resolution, reopen, waiting and
+-- availability -- so tickets RAISED are invisible in real time and have to come
+-- from the Extract API's Conversation-Created event.
+CREATE TABLE IF NOT EXISTS ticket_created_events (
+    conversation_id TEXT PRIMARY KEY,
+    created_at      TIMESTAMPTZ NOT NULL,
+    user_id         TEXT,
+    channel_name    TEXT,
+    reopened        BOOLEAN,
+    ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tcreated_at ON ticket_created_events (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_avail_agent_time
     ON agent_availability_events (agent_id, COALESCE(changed_at, received_at));
 CREATE INDEX IF NOT EXISTS idx_avail_received
@@ -370,6 +384,74 @@ def message_hourly(days: int, tz: str, shift_hour: int) -> list[dict]:
             {"tz": tz, "shift_hour": shift_hour, "days": days},
         )
         return cur.fetchall()
+
+
+def insert_tickets_created(rows: list[dict]) -> int:
+    """Bulk insert created tickets. Keyed on conversation_id, so a re-ingest of an
+    overlapping window is a no-op."""
+    if not rows:
+        return 0
+    with cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO ticket_created_events
+                (conversation_id, created_at, user_id, channel_name, reopened)
+            VALUES (%(conversation_id)s, %(created_at)s, %(user_id)s, %(channel_name)s,
+                    %(reopened)s)
+            ON CONFLICT (conversation_id) DO NOTHING
+            """,
+            rows,
+        )
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+def ticket_flow(days: int, tz: str) -> list[dict]:
+    """Per local day: tickets raised, tickets resolved, and how many of the
+    tickets raised that day were themselves resolved.
+
+    Resolved-same-day is counted by joining on conversation_id rather than by
+    comparing daily totals, because a ticket raised late at night is often
+    resolved the next morning and subtracting totals would hide that.
+    """
+    with cursor() as cur:
+        cur.execute(
+            """
+            WITH created AS (
+                SELECT conversation_id,
+                       (created_at AT TIME ZONE %(tz)s)::date AS d
+                FROM ticket_created_events
+                WHERE created_at >= now() - make_interval(days => %(days)s)
+            ),
+            solved AS (
+                SELECT DISTINCT conversation_id FROM resolve_events
+            ),
+            resolved_by_day AS (
+                SELECT (resolved_at AT TIME ZONE %(tz)s)::date AS d, COUNT(*) AS n
+                FROM resolve_events
+                WHERE resolved_at >= now() - make_interval(days => %(days)s)
+                GROUP BY 1
+            )
+            SELECT c.d::text                                      AS bucket,
+                   COUNT(*)                                       AS raised,
+                   COUNT(s.conversation_id)                       AS raised_and_solved,
+                   COALESCE(MAX(r.n), 0)                          AS resolved_that_day
+            FROM created c
+            LEFT JOIN solved s ON s.conversation_id = c.conversation_id
+            LEFT JOIN resolved_by_day r ON r.d = c.d
+            GROUP BY c.d
+            ORDER BY c.d DESC
+            """,
+            {"tz": tz, "days": days},
+        )
+        return cur.fetchall()
+
+
+def ticket_flow_stats() -> dict:
+    with cursor() as cur:
+        cur.execute("""SELECT COUNT(*) AS tickets, MIN(created_at) AS oldest,
+                              MAX(created_at) AS newest, MAX(ingested_at) AS last_ingest
+                       FROM ticket_created_events""")
+        return cur.fetchone() or {}
 
 
 def message_stats() -> dict:

@@ -60,6 +60,38 @@ def rows_from_extract(raw: list[dict]) -> list[dict]:
     return out
 
 
+def tickets_from_extract(raw: list[dict]) -> list[dict]:
+    """Conversation-Created rows -> insertable ticket rows."""
+    out = []
+    for r in raw:
+        cid = (r.get("conversation_id") or "").strip()
+        ts = (r.get("created_at") or "").strip()
+        if not cid or not ts:
+            continue
+        out.append({
+            "conversation_id": cid,
+            "created_at": ts,
+            "user_id": (r.get("user_id") or "").strip() or None,
+            "channel_name": (r.get("channel_name") or "").strip() or None,
+            "reopened": (r.get("reopened") or "").strip().lower() == "true",
+        })
+    return out
+
+
+async def ingest_tickets(client: httpx.AsyncClient, start: datetime,
+                         end: datetime) -> tuple[int, int]:
+    """Pull Conversation-Created for a window and store it."""
+    fmt = "%Y-%m-%dT%H:%M:%S.000Z"
+    raw = await extract.fetch(client, extract.EVENT_CONVERSATION_CREATED,
+                              start.astimezone(timezone.utc).strftime(fmt),
+                              end.astimezone(timezone.utc).strftime(fmt))
+    rows = tickets_from_extract(raw)
+    inserted = db.insert_tickets_created(rows)
+    log.info("ticket ingest %s..%s: %d rows, %d new", start.date(), end.date(),
+             len(rows), inserted)
+    return len(rows), inserted
+
+
 async def ingest(client: httpx.AsyncClient, start: datetime, end: datetime) -> tuple[int, int]:
     """Pull Message-Sent for a window and store it. Returns (fetched, inserted)."""
     fmt = "%Y-%m-%dT%H:%M:%S.000Z"
@@ -76,7 +108,15 @@ async def ingest(client: httpx.AsyncClient, start: datetime, end: datetime) -> t
 async def catch_up(client: httpx.AsyncClient) -> tuple[int, int]:
     """Ingest the recent window. Safe to call repeatedly."""
     now = datetime.now(timezone.utc)
-    return await ingest(client, now - timedelta(hours=INGEST_OVERLAP_HOURS), now)
+    start = now - timedelta(hours=INGEST_OVERLAP_HOURS)
+    res = await ingest(client, start, now)
+    # Separate event, separate rate-limit bucket, so no wait is needed between
+    # the two. Failure here must not lose the message ingest above.
+    try:
+        await ingest_tickets(client, start, now)
+    except Exception as e:  # noqa: BLE001
+        log.warning("ticket ingest failed: %s", e)
+    return res
 
 
 def attendance_rows(days: int) -> dict:

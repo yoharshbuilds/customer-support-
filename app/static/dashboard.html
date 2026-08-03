@@ -79,6 +79,19 @@ tr.new{animation:flash 2.5s ease-out}
   border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px}
 .pager button:disabled{opacity:.4;cursor:default}
 .err{background:rgba(200,69,47,.1);color:var(--bad);padding:10px 14px;border-radius:8px;margin-bottom:14px}
+
+/* --- bar charts (orders, issues, ticket flow) --- */
+.chart{padding:14px}
+.crow{display:grid;grid-template-columns:96px 1fr 132px;gap:10px;align-items:center;margin-bottom:5px}
+.crow .cl{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.crow .cv{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.cbar{display:flex;height:18px;border-radius:4px;overflow:hidden;background:rgba(120,130,145,.10)}
+.cseg{height:100%}
+.cseg:hover{filter:brightness(1.15)}
+.clegend{display:flex;gap:12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.clegend span{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
+.clegend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+.mece{padding:10px 14px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
 /* --- attendance grid --- */
 .note{background:rgba(194,129,10,.12);border:1px solid rgba(194,129,10,.3);
   padding:11px 14px;border-radius:9px;margin-bottom:16px;font-size:13px}
@@ -137,6 +150,7 @@ tr.new{animation:flash 2.5s ease-out}
     <button data-p="3">Median time</button>
     <button data-p="4">Attendance</button>
     <button data-p="5">Orders</button>
+    <button data-p="6">Tickets &amp; issues</button>
   </nav>
 </header>
 
@@ -337,6 +351,22 @@ tr.new{animation:flash 2.5s ease-out}
     <div class="cards" id="o_cards"></div>
 
     <div class="panel">
+      <h2>Order volume by day</h2>
+      <div class="clegend">
+        <span><i style="background:#1a9a5f"></i> clean</span>
+        <span><i style="background:#c2810a"></i> partly cancelled</span>
+        <span><i style="background:#c8452f"></i> fully cancelled</span>
+        <span>· bar length = total orders placed, cancellations included</span>
+      </div>
+      <div class="chart" id="o_chart"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Order volume by week</h2>
+      <div class="chart" id="o_wchart"></div>
+    </div>
+
+    <div class="panel">
       <h2>Day by day <span class="role" style="text-transform:none;letter-spacing:0" id="o_dsub"></span></h2>
       <div class="scroll"><table id="o_daily"></table></div>
     </div>
@@ -344,6 +374,59 @@ tr.new{animation:flash 2.5s ease-out}
     <div class="panel">
       <h2>Week by week</h2>
       <div class="scroll"><table id="o_weekly"></table></div>
+    </div>
+  </section>
+
+  <!-- Page 6: ticket inflow vs solved, and the MECE issue mix -->
+  <section class="page" id="p6">
+    <div class="filters" style="position:static;border-radius:10px;border:1px solid var(--line);margin-bottom:16px">
+      <div class="f"><label>Window</label>
+        <select id="t_days">
+          <option value="7">Last 7 days</option>
+          <option value="14" selected>Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select></div>
+      <div class="f"><label>Live refresh</label>
+        <select id="t_live">
+          <option value="60" selected>Every 60s</option>
+          <option value="300">Every 5 min</option>
+          <option value="0">Off</option>
+        </select></div>
+      <div class="f"><label>&nbsp;</label>
+        <span class="live"><span class="dot" id="t_dot"></span><span id="t_when">loading…</span></span></div>
+    </div>
+
+    <div class="note">
+      <b>Resolutions are live; ticket inflow lags up to an hour.</b>
+      Freshchat never sends a conversation_create webhook, so tickets raised come from the
+      hourly Conversation-Created ingest while resolutions arrive in real time. Solve rate
+      is matched per conversation, not by subtracting daily totals — a ticket raised at
+      23:00 and closed at 08:00 still counts as solved.
+      <span id="t_src"></span>
+    </div>
+
+    <div class="cards" id="t_cards"></div>
+
+    <div class="panel">
+      <h2>Tickets raised vs solved</h2>
+      <div class="clegend">
+        <span><i style="background:#1a9a5f"></i> raised &amp; solved</span>
+        <span><i style="background:#c2810a"></i> raised, still open</span>
+        <span>· bar length = tickets raised that day</span>
+      </div>
+      <div class="chart" id="t_chart"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Issue mix <span class="role" style="text-transform:none;letter-spacing:0">— MECE: one bucket per ticket, nothing unattributed</span></h2>
+      <div class="clegend" id="i_legend"></div>
+      <div class="chart" id="i_chart"></div>
+      <div class="mece" id="i_audit"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Issue mix by day</h2>
+      <div class="chart" id="i_daily"></div>
     </div>
   </section>
 </main>
@@ -834,6 +917,7 @@ function renderOrders(){
   $('#o_cards').innerHTML = cards.map(([k, v, sub]) =>
     `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
      <div class="sub">${esc(sub)}</div></div>`).join('');
+  renderOrderCharts();
   $('#o_daily').innerHTML  = ordTable(d, false);
   $('#o_weekly').innerHTML = ordTable(w, true);
   $('#o_dsub').textContent = `— ${ORD.timezone}, newest first; today is partial`;
@@ -866,6 +950,141 @@ function scheduleOrders(){
 $('#o_days').addEventListener('change', () => loadOrders().catch(() => {}));
 $('#o_live').addEventListener('change', scheduleOrders);
 
+
+/* ---------- shared stacked bar renderer ---------- */
+function stackedBars(rows, segs, max, label){
+  if (!rows.length) return '<div class="empty">No data.</div>';
+  return rows.map(r => {
+    const total = segs.reduce((a, sg) => a + (+r[sg.field] || 0), 0);
+    const cells = segs.map(sg => {
+      const v = +r[sg.field] || 0;
+      if (!v) return '';
+      const pct = max ? (100 * v / max) : 0;
+      return `<div class="cseg" style="width:${pct}%;background:${sg.color}"`
+        + ` title="${esc(sg.label)}: ${v}"></div>`;
+    }).join('');
+    return `<div class="crow">
+      <div class="cl">${esc(label(r))}</div>
+      <div class="cbar">${cells}</div>
+      <div class="cv">${esc(r.__note || total)}</div></div>`;
+  }).join('');
+}
+
+/* ---------- orders bar charts ---------- */
+const ORD_SEGS = [
+  {field:'not_cancelled',    label:'clean',             color:'#1a9a5f'},
+  {field:'partly_cancelled', label:'partly cancelled',  color:'#c2810a'},
+  {field:'fully_cancelled',  label:'fully cancelled',   color:'#c8452f'},
+];
+function renderOrderCharts(){
+  const d = (ORD.daily || []).slice().reverse();
+  const w = (ORD.weekly || []).slice().reverse();
+  const dmax = Math.max(1, ...d.map(r => r.total_orders));
+  const wmax = Math.max(1, ...w.map(r => r.total_orders));
+  d.forEach(r => r.__note = `${r.total_orders}  (${r.cancel_rate}% cx)`);
+  w.forEach(r => r.__note = `${r.total_orders}  (${r.cancel_rate}% cx)`);
+  $('#o_chart').innerHTML  = stackedBars(d, ORD_SEGS, dmax, r => r.bucket.slice(5));
+  $('#o_wchart').innerHTML = stackedBars(w, ORD_SEGS, wmax, r => 'wk ' + r.bucket.slice(5));
+}
+
+/* ---------- tickets raised vs solved, and MECE issues ---------- */
+let TF = null, ISS = null, tTimer = null;
+
+function renderTicketFlow(){
+  const all = (TF.daily || []).slice().reverse();
+  // Days before resolve capture began report inflow only -- showing them as
+  // "0 solved" would blame the team for a hole in our data.
+  const rows = all.filter(r => r.has_resolve_data);
+  const skipped = all.length - rows.length;
+  rows.forEach(r => { r.__open = r.raised - r.raised_and_solved;
+                      r.__note = `${r.raised_and_solved}/${r.raised}  ${r.solve_rate}%`; });
+  const max = Math.max(1, ...rows.map(r => r.raised));
+  $('#t_chart').innerHTML = stackedBars(rows, [
+    {field:'raised_and_solved', label:'raised & solved', color:'#1a9a5f'},
+    {field:'__open',            label:'still open',      color:'#c2810a'},
+  ], max, r => r.bucket.slice(5));
+
+  if (skipped) $('#t_chart').dataset.skipped = skipped;
+  const tot = rows.reduce((a,r) => a + r.raised, 0);
+  const sol = rows.reduce((a,r) => a + r.raised_and_solved, 0);
+  const res = rows.reduce((a,r) => a + r.resolved_that_day, 0);
+  const today = rows[rows.length-1] || {};
+  $('#t_cards').innerHTML = [
+    ['Raised today', today.raised || 0, 'inflow lags up to 1h'],
+    ['Solved today', today.raised_and_solved || 0, (today.solve_rate || 0) + '% of today\'s'],
+    ['Raised in window', tot, `${TF.days} days`],
+    ['Solved', sol, tot ? (100*sol/tot).toFixed(1) + '% of raised' : '—'],
+    ['Resolutions logged', res, 'includes older tickets'],
+  ].map(([k,v,sub]) => `<div class="card"><div class="k">${esc(k)}</div>
+      <div class="v">${esc(v)}</div><div class="sub">${esc(sub)}</div></div>`).join('');
+  $('#t_src').textContent = ` Inflow: ${TF.inflow_source}. Resolutions: ${TF.resolved_source}.`
+    + (skipped ? ` ${skipped} earlier day${skipped===1?'':'s'} show inflow only —`
+       + ` resolve capture starts ${TF.resolve_data_from}.` : '');
+}
+
+function renderIssues(){
+  const bk = ISS.buckets || [];
+  $('#i_legend').innerHTML = bk.map(b =>
+    `<span><i style="background:${b.color}"></i> ${esc(b.label)} ${ISS.counts[b.key]||0}</span>`).join('');
+
+  // total mix: one bar per bucket, so shares are directly comparable
+  const max = Math.max(1, ...bk.map(b => ISS.counts[b.key] || 0));
+  $('#i_chart').innerHTML = bk.filter(b => (ISS.counts[b.key]||0) > 0).map(b => {
+    const n = ISS.counts[b.key] || 0;
+    const oc = (ISS.outcome_by_bucket || {})[b.key] || {};
+    const solvedPct = oc.total ? Math.round(100*oc.resolved/oc.total) : 0;
+    return `<div class="crow">
+      <div class="cl">${esc(b.label)}</div>
+      <div class="cbar"><div class="cseg" style="width:${100*n/max}%;background:${b.color}"
+        title="${esc(b.label)}: ${n} tickets, ${solvedPct}% marked resolved"></div></div>
+      <div class="cv">${n} · ${ISS.share[b.key]}% · ${solvedPct}% solved</div></div>`;
+  }).join('');
+
+  // stacked by day
+  const days = Object.keys(ISS.per_day || {}).sort();
+  const dmax = Math.max(1, ...days.map(d =>
+    Object.values(ISS.per_day[d]).reduce((a,b)=>a+b,0)));
+  const segs = bk.map(b => ({field:b.key, label:b.label, color:b.color}));
+  const rows = days.map(d => ({...ISS.per_day[d], bucket:d,
+    __note: Object.values(ISS.per_day[d]).reduce((a,b)=>a+b,0)}));
+  $('#i_daily').innerHTML = stackedBars(rows, segs, dmax, r => r.bucket.slice(5));
+
+  const un = ISS.counts.unclassified || 0;
+  const unmapped = Object.keys(ISS.unmapped_tags || {});
+  $('#i_audit').textContent =
+    `${ISS.total} tickets, every one in exactly one bucket. Unclassified: ${un}`
+    + ` (${ISS.share.unclassified}%). Evidence used — `
+    + Object.entries(ISS.by_evidence || {}).map(([k,v]) => `${k}: ${v}`).join(', ')
+    + (unmapped.length ? `. NEW UNMAPPED TAGS: ${unmapped.join('; ')}` : '. No unmapped agent tags.');
+}
+
+async function loadTickets(){
+  try{
+    const d = encodeURIComponent($('#t_days').value);
+    const [tf, iss] = await Promise.all([
+      fetch(`/api/tickets_flow?days=${d}`).then(r => { if(!r.ok) throw new Error('flow '+r.status); return r.json(); }),
+      fetch(`/api/issues?days=${d}`).then(r => { if(!r.ok) throw new Error('issues '+r.status); return r.json(); }),
+    ]);
+    TF = tf; ISS = iss;
+    renderTicketFlow(); renderIssues();
+    $('#t_dot').classList.add('on');
+    $('#t_when').textContent = 'updated ' + new Date().toLocaleTimeString();
+  }catch(e){
+    $('#t_dot').classList.remove('on');
+    $('#t_when').textContent = 'failed: ' + e.message;
+    throw e;
+  }
+}
+
+function scheduleTickets(){
+  clearInterval(tTimer);
+  const secs = +$('#t_live').value;
+  if (secs > 0) tTimer = setInterval(() => { if (page === 6) loadTickets().catch(()=>{}); }, secs*1000);
+}
+
+$('#t_days').addEventListener('change', () => loadTickets().catch(()=>{}));
+$('#t_live').addEventListener('change', scheduleTickets);
+
 async function refresh(){
   try{
     showErr('');
@@ -873,6 +1092,7 @@ async function refresh(){
     else if (page === 2) await loadStats();
     else if (page === 4) await loadAttendance();
     else if (page === 5) { await loadOrders(); scheduleOrders(); }
+    else if (page === 6) { await loadTickets(); scheduleTickets(); }
     else await loadMedian();
   }catch(e){ showErr(e.message); }
 }
@@ -899,7 +1119,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   // The global filter bar is about tickets. None of it applies to whether a
   // person turned up, so leaving it visible on the attendance tab would imply
   // the grid responds to it.
-  $('#filters').style.display = (page === 4 || page === 5) ? 'none' : '';
+  $('#filters').style.display = (page >= 4) ? 'none' : '';
   refresh();
 });
 

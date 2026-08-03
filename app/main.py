@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import (activity, alerts, attendance, availability, config, db, enrich,
-               orders, roster, signature)
+               issues, orders, roster, signature)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -754,6 +754,94 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
     }
 
 
+@app.get("/api/issues")
+def api_issues(days: int = Query(30, ge=1, le=365)):
+    """MECE issue breakdown. Every ticket lands in exactly one real bucket.
+
+    Neither the agent tag nor the LLM label works alone, so issues.classify()
+    cascades tag -> LLM -> tag family -> LLM root cause. The residual is reported
+    as `unclassified` and is expected to be near zero; if it grows, a new agent
+    tag has appeared and belongs in issues.TAG_MAP.
+    """
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT issue_type, llm_issue, llm_root_cause,
+                   (resolved_at AT TIME ZONE %(tz)s)::date::text AS day,
+                   llm_resolution
+            FROM resolve_events
+            WHERE resolved_at >= now() - make_interval(days => %(days)s)
+            """,
+            {"tz": config.TIMEZONE, "days": days},
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    audit = issues.audit(rows)
+    # Per-day, so the bars can be stacked over time rather than only in total.
+    per_day: dict[str, dict] = {}
+    solved: dict[str, dict] = {}
+    for r in rows:
+        key, _ = issues.classify(r.get("issue_type"), r.get("llm_issue"), r.get("llm_root_cause"))
+        d = r["day"]
+        per_day.setdefault(d, {})[key] = per_day.setdefault(d, {}).get(key, 0) + 1
+        s = solved.setdefault(key, {"total": 0, "resolved": 0})
+        s["total"] += 1
+        if (r.get("llm_resolution") or "") == "resolved":
+            s["resolved"] += 1
+    return {**audit, "days": days, "timezone": config.TIMEZONE,
+            "per_day": per_day, "outcome_by_bucket": solved}
+
+
+@app.get("/api/tickets_flow")
+def api_tickets_flow(days: int = Query(14, ge=1, le=120)):
+    """Tickets raised vs resolved per day, plus how many raised were solved.
+
+    Ticket inflow is NOT available from the webhook -- Freshchat never sends
+    conversation_create -- so it comes from the hourly Conversation-Created
+    ingest. Resolutions are live from the webhook, so the two sides have
+    different freshness and the payload says so.
+    """
+    flow = db.ticket_flow(days, config.TIMEZONE)
+    stats = db.ticket_flow_stats()
+
+    # Resolve capture started when this app was first deployed, and ticket inflow
+    # reaches further back. Without this boundary a day before capture began shows
+    # "solved 0 of 144", which is a lie about the team rather than a gap in our
+    # data. Those days report raised only, with solve_rate omitted.
+    with db.cursor() as cur:
+        cur.execute("SELECT MIN(resolved_at) AS since FROM resolve_events")
+        since = (cur.fetchone() or {}).get("since")
+    boundary = None
+    if since is not None:
+        cur_tz = since.astimezone(ZoneInfo(config.TIMEZONE)).date()
+        # First FULL local day of resolve data: the partial first day would also
+        # understate the rate.
+        boundary = (cur_tz + timedelta(days=1)).isoformat()
+
+    out = []
+    for r in flow:
+        raised = r["raised"] or 0
+        solved = r["raised_and_solved"] or 0
+        complete = boundary is not None and r["bucket"] >= boundary
+        out.append({
+            "bucket": r["bucket"],
+            "raised": raised,
+            "raised_and_solved": solved if complete else None,
+            "resolved_that_day": r["resolved_that_day"] or 0,
+            "solve_rate": (round(100.0 * solved / raised, 1) if raised else 0.0) if complete else None,
+            "has_resolve_data": complete,
+        })
+    return {
+        "days": days,
+        "timezone": config.TIMEZONE,
+        "daily": out,
+        "inflow_source": "Extract API Conversation-Created, ingested hourly",
+        "resolved_source": "live webhook",
+        "inflow_stats": {k: str(v) for k, v in stats.items()},
+        "resolve_data_from": boundary,
+    }
+
+
 @app.get("/api/orders")
 async def api_orders(days: int = Query(30, ge=1, le=180)):
     """Order volume INCLUDING cancelled orders, by day and by week.
@@ -797,6 +885,7 @@ def healthz():
         "availability": db.availability_stats(),
         # Agent message activity -- the presence signal the attendance tab uses.
         "agent_messages": db.message_stats(),
+        "ticket_inflow": db.ticket_flow_stats(),
     }
 
 
