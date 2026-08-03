@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import (activity, alerts, attendance, availability, config, db, enrich,
-               issues, orders, roster, signature)
+               issues, orders, reconcile, roster, signature)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -133,6 +133,26 @@ async def _message_ingest() -> None:
         await asyncio.sleep(activity.INGEST_INTERVAL_SECONDS)
 
 
+async def _resolution_reconcile() -> None:
+    """Recover resolutions the webhook never received.
+
+    Our resolve_events was 88.4% complete against Freshchat's own export -- two
+    days lost 58 resolutions between them, almost certainly to free-tier sleep and
+    restarts dropping in-flight requests. That cannot be fixed in the webhook
+    handler, because the request never arrived, so it is fixed by comparison
+    afterwards.
+    """
+    # Offset from the message ingest so two slow extract jobs do not start at once.
+    await asyncio.sleep(90)
+    while True:
+        try:
+            assert _client is not None
+            await reconcile.run_once(_client, _llm)
+        except Exception as e:  # noqa: BLE001 -- one bad pass must not kill the loop
+            log.warning("resolution reconcile failed: %s", e)
+        await asyncio.sleep(reconcile.RECONCILE_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _client, _llm
@@ -154,10 +174,12 @@ async def lifespan(_: FastAPI):
         )
     task = asyncio.create_task(_retry_sweeper())
     ingest_task = asyncio.create_task(_message_ingest())
+    recon_task = asyncio.create_task(_resolution_reconcile())
     log.info("ready")
     yield
     task.cancel()
     ingest_task.cancel()
+    recon_task.cancel()
     await _client.aclose()
     if _llm is not None:
         await _llm.close()
@@ -886,6 +908,9 @@ def healthz():
         # Agent message activity -- the presence signal the attendance tab uses.
         "agent_messages": db.message_stats(),
         "ticket_inflow": db.ticket_flow_stats(),
+        # Resolution completeness. `missing` above zero means the webhook is
+        # dropping events again and the reconciler is catching them.
+        "resolution_reconcile": dict(reconcile.LAST),
     }
 
 

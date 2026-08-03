@@ -289,7 +289,7 @@ tr.new{animation:flash 2.5s ease-out}
         <span><i class="sw" style="background:rgba(194,129,10,.18)"></i> short (&lt;<span id="a_shorth">4</span>h)</span>
         <span><i class="sw" style="background:rgba(120,130,145,.2)"></i> no activity</span>
         <span><i class="sw" style="box-shadow:inset 0 0 0 1.5px var(--good)"></i> real sign-in record</span>
-        <span>· available hours on top, chats resolved below</span>
+        <span>· hours on top, chats resolved below</span>
         <span>· 🌙 shift crossed midnight</span>
         <span>· ● still signed in</span>
         <span>· ≥ never went unavailable, hours truncated</span>
@@ -301,7 +301,7 @@ tr.new{animation:flash 2.5s ease-out}
     <div class="panel">
       <h2>Hour-wise coverage
         <span class="role" style="text-transform:none;letter-spacing:0">
-          — agent messages per hour<span id="hr_tz"></span></span>
+          — customer-facing agent messages per hour<span id="hr_tz"></span></span>
       </h2>
       <div class="legend">
         <span>Shift day</span>
@@ -688,7 +688,7 @@ function attGrid(){
             + (c.capped ? ' · never went unavailable, so this is truncated at the'
                         + ' end of the shift day — hours are a floor' : '')
           : msgs
-          ? `${c.first}–${c.last} (first→last message) · ${c.messages} messages across `
+          ? `${c.first}–${c.last} (first→last message) · ${c.messages} customer-facing messages across `
             + `${c.conversations} chats · ${c.resolves} resolved`
           : `${c.first}–${c.last} (first→last resolve — weakest signal, no message data) `
             + `· ${c.resolves} resolved`;

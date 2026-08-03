@@ -38,7 +38,16 @@ def _dedupe_key(agent_id: str, sent_at: str, conversation_id: str) -> str:
 
 
 def rows_from_extract(raw: list[dict]) -> list[dict]:
-    """Turn Message-Sent CSV rows into insertable agent-message rows."""
+    """Turn Message-Sent CSV rows into insertable agent-message rows.
+
+    NOTE on what this counts. Checked against the live messages API on 15
+    conversations: 14 matched exactly against agent messages of type "normal".
+    Message-Sent does NOT include an agent's `system` or `private` messages -- in
+    that sample, 17 system and 7 private against 85 normal. Private notes are real
+    work, so message COUNTS here are customer-facing messages only and understate
+    total activity by roughly 8%. Presence windows (first text -> last text) are
+    unaffected, which is what attendance actually uses.
+    """
     out = []
     for r in raw:
         # USER and SYSTEM rows exist in the same export; only agents mark attendance.
