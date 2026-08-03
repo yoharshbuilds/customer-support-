@@ -712,7 +712,20 @@ def index():
                 "api": ["/healthz", "/api/tickets", "/api/stats", "/api/median", "/api/filters", "/api/stream"],
             }
         )
-    return FileResponse(page)
+    # FileResponse sends ETag and Last-Modified but no Cache-Control, and with no
+    # Cache-Control a browser is free to guess a freshness lifetime and serve the
+    # page WITHOUT revalidating. That is not theoretical: it hid the whole
+    # attendance tab after it was deployed, on a URL that was serving the new
+    # HTML correctly the entire time.
+    #
+    # "no-cache" does not mean "do not store" -- it means "revalidate before
+    # reuse". Note that FileResponse does NOT honour If-None-Match, so that
+    # revalidation is a full ~34KB body every load, not a 304. At this traffic
+    # (one page, a handful of staff) that is the right trade for a deploy being
+    # visible immediately; if it ever matters, handle the conditional request
+    # here rather than reintroducing a guessed freshness window. Everything the
+    # page needs is inlined, so there are no other assets to version.
+    return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 if __name__ == "__main__":
