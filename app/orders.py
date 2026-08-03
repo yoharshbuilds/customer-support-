@@ -41,8 +41,9 @@ from . import config
 log = logging.getLogger(__name__)
 
 # Metabase queries take seconds and the page polls, so results are cached
-# briefly. Order volume does not change meaningfully inside a minute.
-CACHE_SECONDS = 60
+# briefly. 20s keeps 'orders placed' visibly live without every viewer costing a
+# separate Redshift scan.
+CACHE_SECONDS = 20
 _cache: dict[str, tuple[float, dict]] = {}
 
 _PER_ORDER = """

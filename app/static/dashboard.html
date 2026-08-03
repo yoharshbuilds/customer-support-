@@ -78,6 +78,13 @@ tr.new{animation:flash 2.5s ease-out}
 .pager button{background:var(--bg);border:1px solid var(--line);color:var(--ink);
   border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px}
 .pager button:disabled{opacity:.4;cursor:default}
+#fresh{gap:10px;flex-wrap:wrap}
+#fresh b{font-weight:650;color:var(--ink)}
+#fresh .fx{display:flex;align-items:center;gap:4px}
+#fresh .fd{width:7px;height:7px;border-radius:50%}
+.f-live{background:var(--good)}
+.f-near{background:var(--accent)}
+.f-lag{background:var(--warn)}
 .err{background:rgba(200,69,47,.1);color:var(--bad);padding:10px 14px;border-radius:8px;margin-bottom:14px}
 
 /* --- bar charts (orders, issues, ticket flow) --- */
@@ -144,6 +151,7 @@ tr.new{animation:flash 2.5s ease-out}
 <header>
   <h1>Plazza · Resolve Dashboard</h1>
   <div class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting…</span></div>
+  <div class="live" id="fresh" title="Not every number can be live: Freshchat sends no conversation_create webhook, and agent messages exist only in the batch Extract API."></div>
   <nav>
     <button data-p="1" class="sel">Tickets</button>
     <button data-p="2">Issue breakdown</button>
@@ -331,7 +339,9 @@ tr.new{animation:flash 2.5s ease-out}
         </select></div>
       <div class="f"><label>Live refresh</label>
         <select id="o_live">
-          <option value="60" selected>Every 60s</option>
+          <option value="15">Every 15s</option>
+          <option value="30" selected>Every 30s</option>
+          <option value="60">Every 60s</option>
           <option value="300">Every 5 min</option>
           <option value="0">Off</option>
         </select></div>
@@ -388,6 +398,7 @@ tr.new{animation:flash 2.5s ease-out}
         </select></div>
       <div class="f"><label>Live refresh</label>
         <select id="t_live">
+          <option value="30">Every 30s</option>
           <option value="60" selected>Every 60s</option>
           <option value="300">Every 5 min</option>
           <option value="0">Off</option>
@@ -946,6 +957,21 @@ function scheduleOrders(){
   // for a page nobody is looking at.
   if (secs > 0) ordTimer = setInterval(() => { if (page === 5) loadOrders().catch(() => {}); }, secs * 1000);
 }
+
+/* Say plainly how fresh each number is. "Live" must not be implied for data that
+   physically cannot be. */
+function renderFreshness(){
+  const items = [
+    ['Resolutions', 'f-live', 'real time (webhook + stream)'],
+    ['Tickets raised', 'f-live', 'real time (first sight of a conversation)'],
+    ['Orders', 'f-near', 'up to ~30s (Redshift, cached 20s)'],
+    ['Issue mix', 'f-live', 'real time (derived from resolutions)'],
+    ['Attendance / hours', 'f-lag', 'up to 1h (batch Extract API)'],
+  ];
+  $('#fresh').innerHTML = items.map(([k, cls, why]) =>
+    `<span class="fx" title="${esc(why)}"><i class="fd ${cls}"></i>${esc(k)}</span>`).join('');
+}
+renderFreshness();
 
 $('#o_days').addEventListener('change', () => loadOrders().catch(() => {}));
 $('#o_live').addEventListener('change', scheduleOrders);

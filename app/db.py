@@ -181,6 +181,11 @@ CREATE TABLE IF NOT EXISTS ticket_created_events (
     ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_tcreated_at ON ticket_created_events (created_at DESC);
+-- 'extract' = hourly batch (authoritative), 'webhook' = spotted live the moment
+-- any event mentioned an unknown conversation, with created_at read from the
+-- conversation itself so the ticket is filed on the day it was really raised.
+ALTER TABLE ticket_created_events
+    ADD COLUMN IF NOT EXISTS source TEXT;
 CREATE INDEX IF NOT EXISTS idx_avail_agent_time
     ON agent_availability_events (agent_id, COALESCE(changed_at, received_at));
 CREATE INDEX IF NOT EXISTS idx_avail_received
@@ -395,14 +400,39 @@ def insert_tickets_created(rows: list[dict]) -> int:
         cur.executemany(
             """
             INSERT INTO ticket_created_events
-                (conversation_id, created_at, user_id, channel_name, reopened)
+                (conversation_id, created_at, user_id, channel_name, reopened, source)
             VALUES (%(conversation_id)s, %(created_at)s, %(user_id)s, %(channel_name)s,
-                    %(reopened)s)
+                    %(reopened)s, 'extract')
             ON CONFLICT (conversation_id) DO NOTHING
             """,
             rows,
         )
         return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+def ticket_seen_live(conversation_id: str, created_at, channel_name=None,
+                     user_id=None) -> bool:
+    """Record a ticket spotted live from the webhook stream. True if it was new."""
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ticket_created_events
+                (conversation_id, created_at, user_id, channel_name, reopened, source)
+            VALUES (%(cid)s, %(created_at)s, %(user_id)s, %(channel)s, false, 'webhook')
+            ON CONFLICT (conversation_id) DO NOTHING
+            RETURNING conversation_id
+            """,
+            {"cid": conversation_id, "created_at": created_at,
+             "user_id": user_id, "channel": channel_name},
+        )
+        return cur.fetchone() is not None
+
+
+def ticket_known(conversation_id: str) -> bool:
+    with cursor() as cur:
+        cur.execute("SELECT 1 FROM ticket_created_events WHERE conversation_id = %s",
+                    (conversation_id,))
+        return cur.fetchone() is not None
 
 
 def ticket_flow(days: int, tz: str) -> list[dict]:

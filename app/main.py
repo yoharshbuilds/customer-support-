@@ -41,6 +41,8 @@ _hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
          # Availability capture, split so "the webhook arrived" can be told apart
          # from "the row was written".
          "availability_stored": 0, "availability_replays": 0, "availability_failed": 0,
+         # Live ticket inflow, spotted from any event naming an unknown conversation.
+         "tickets_seen_live": 0, "tickets_lookup_failed": 0,
          # Composition of the traffic. One webhook URL receives every event
          # type Freshchat emits, so knowing the mix explains both the volume
          # and how much of it we discard.
@@ -71,6 +73,45 @@ def _log_task_exception(task: asyncio.Task) -> None:
 def _walk_action(payload: dict) -> str | None:
     """Best-effort action name, for the /healthz tally."""
     return enrich._walk(payload, "action")
+
+
+async def _note_ticket(conversation_id: str) -> None:
+    """Register a ticket the moment any webhook event names a conversation we have
+    never seen.
+
+    Freshchat sends no conversation_create webhook, so ticket inflow otherwise
+    waits for the hourly Extract ingest. But every event -- message_create,
+    assignment, resolution -- carries a conversation id, so first sight is a live
+    signal that a ticket exists.
+
+    The created_at is read from the conversation itself rather than from the event,
+    because a message on a three-day-old chat would otherwise be filed as a ticket
+    raised today. One API call per genuinely new conversation, ~130/day.
+    """
+    try:
+        if db.ticket_known(conversation_id):
+            return
+        assert _client is not None
+        r = await _client.get(
+            f"{config.freshchat_base()}/conversations/{conversation_id}",
+            headers={"Authorization": f"Bearer {config.FRESHCHAT_API_TOKEN}"},
+            timeout=20.0,
+        )
+        if r.status_code != 200:
+            _hits["tickets_lookup_failed"] += 1
+            return
+        body = r.json()
+        created = enrich.parse_ts(body.get("created_time"))
+        if created is None:
+            _hits["tickets_lookup_failed"] += 1
+            return
+        if db.ticket_seen_live(conversation_id, created,
+                              channel_name=body.get("channel_name"),
+                              user_id=body.get("user_id")):
+            _hits["tickets_seen_live"] += 1
+    except Exception as e:  # noqa: BLE001 -- inflow tracking must never fail a webhook
+        _hits["tickets_lookup_failed"] += 1
+        log.warning("live ticket note failed for %s: %s", conversation_id, e)
 
 
 async def _broadcast(kind: str, data: dict) -> None:
@@ -306,6 +347,11 @@ async def freshchat_webhook(request: Request):
         # sign-in record in the system, so they get stored instead of discarded.
         # Wrapped: a capture bug must never turn a 200 into a 500, because
         # Freshchat retries failures and eventually disables the endpoint.
+        # Any event naming a conversation is evidence a ticket exists.
+        cid_seen = enrich.extract_conversation_id(payload)
+        if cid_seen:
+            _spawn(_note_ticket(cid_seen))
+
         if availability.is_availability(payload):
             try:
                 ev = availability.extract(payload)
@@ -341,6 +387,7 @@ async def freshchat_webhook(request: Request):
     _hits["last_action"] = act
     _hits["by_action"][act] = _hits["by_action"].get(act, 0) + 1
     log.info("webhook ACCEPTED: conversation %s resolved at %s", conversation_id, resolved_at)
+    _spawn(_note_ticket(conversation_id))
     row_id = db.insert_event(
         {
             "conversation_id": conversation_id,
