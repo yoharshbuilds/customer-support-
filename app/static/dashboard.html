@@ -136,6 +136,7 @@ tr.new{animation:flash 2.5s ease-out}
     <button data-p="2">Issue breakdown</button>
     <button data-p="3">Median time</button>
     <button data-p="4">Attendance</button>
+    <button data-p="5">Orders</button>
   </nav>
 </header>
 
@@ -302,6 +303,47 @@ tr.new{animation:flash 2.5s ease-out}
     <div class="panel">
       <h2>Per-agent summary</h2>
       <div class="scroll"><table id="a_summary"></table></div>
+    </div>
+  </section>
+
+  <!-- Page 5: order volume, including cancelled. Live-polled. -->
+  <section class="page" id="p5">
+    <div class="filters" style="position:static;border-radius:10px;border:1px solid var(--line);margin-bottom:16px">
+      <div class="f"><label>Window</label>
+        <select id="o_days">
+          <option value="14">Last 14 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select></div>
+      <div class="f"><label>Live refresh</label>
+        <select id="o_live">
+          <option value="60" selected>Every 60s</option>
+          <option value="300">Every 5 min</option>
+          <option value="0">Off</option>
+        </select></div>
+      <div class="f"><label>&nbsp;</label>
+        <span class="live"><span class="dot" id="o_dot"></span><span id="o_when">loading…</span></span></div>
+    </div>
+
+    <div class="note">
+      <b>Total includes cancelled orders.</b>
+      This counts every order placed, whatever happened to it afterwards. Plazza Dashboard v4's
+      &ldquo;Total Order Count&rdquo; <i>excludes</i> fully cancelled orders, so it reads lower —
+      the <b>excl. cancelled</b> column below reproduces that figure so the two reconcile.
+      An order can have several batches, so cancellation is split into fully and partly cancelled.
+      <span id="o_src"></span>
+    </div>
+
+    <div class="cards" id="o_cards"></div>
+
+    <div class="panel">
+      <h2>Day by day <span class="role" style="text-transform:none;letter-spacing:0" id="o_dsub"></span></h2>
+      <div class="scroll"><table id="o_daily"></table></div>
+    </div>
+
+    <div class="panel">
+      <h2>Week by week</h2>
+      <div class="scroll"><table id="o_weekly"></table></div>
     </div>
   </section>
 </main>
@@ -733,12 +775,104 @@ async function loadAttendance(){
   attCards(); attGrid(); attSummary(); fillHourDays(); renderHours();
 }
 
+
+/* ---------- orders (live) ---------- */
+let ORD = null, ordTimer = null;
+
+function ordBar(v, max){
+  const w = max ? Math.max(2, Math.round(100 * v / max)) : 2;
+  return `<div style="height:6px;border-radius:3px;background:var(--accent);width:${w}%"></div>`;
+}
+
+function ordTable(rows, isWeek){
+  if (!rows || !rows.length) return '<tbody><tr><td class="empty">No orders in this window.</td></tr></tbody>';
+  const max = Math.max(...rows.map(r => r.total_orders));
+  const head = `<thead><tr>
+    <th class="no">${isWeek ? 'Week starting' : 'Date'}</th>
+    <th class="no num">Total (incl. cancelled)</th>
+    <th class="no num">Fully cancelled</th>
+    <th class="no num">Partly cancelled</th>
+    <th class="no num">Clean</th>
+    <th class="no num">Cancel rate</th>
+    <th class="no num">Excl. cancelled</th>
+    ${isWeek ? '<th class="no num">Days</th><th class="no num">Avg/day</th>' : ''}
+    <th class="no" style="min-width:120px">Volume</th></tr></thead>`;
+  const body = rows.map(r => {
+    const rate = r.cancel_rate;
+    const tag = rate >= 10 ? 'b' : rate >= 6 ? 'w' : 'g';
+    const avg = isWeek && r.days_in_bucket ? (r.total_orders / r.days_in_bucket).toFixed(0) : '';
+    return `<tr>
+      <td>${esc(r.bucket)}</td>
+      <td class="num"><b>${r.total_orders}</b></td>
+      <td class="num">${r.fully_cancelled}</td>
+      <td class="num">${r.partly_cancelled}</td>
+      <td class="num">${r.not_cancelled}</td>
+      <td class="num"><span class="tag ${tag}">${rate}%</span></td>
+      <td class="num" style="color:var(--muted)">${r.excl_fully_cancelled}</td>
+      ${isWeek ? `<td class="num">${r.days_in_bucket}</td><td class="num">${avg}</td>` : ''}
+      <td>${ordBar(r.total_orders, max)}</td></tr>`;
+  }).join('');
+  return head + '<tbody>' + body + '</tbody>';
+}
+
+function renderOrders(){
+  const d = ORD.daily || [], w = ORD.weekly || [];
+  const tot = d.reduce((a, r) => a + r.total_orders, 0);
+  const fc  = d.reduce((a, r) => a + r.fully_cancelled, 0);
+  // Today is partial, so "busiest" and averages use complete days only.
+  const complete = d.slice(1);
+  const avg = complete.length
+    ? Math.round(complete.reduce((a, r) => a + r.total_orders, 0) / complete.length) : 0;
+  const best = complete.reduce((b, r) => (!b || r.total_orders > b.total_orders) ? r : b, null);
+  const cards = [
+    ['Today so far', d.length ? d[0].total_orders : 0, d.length ? esc(d[0].bucket) + ' · still running' : ''],
+    ['Avg / complete day', avg, `over ${complete.length} day${complete.length === 1 ? '' : 's'}`],
+    ['Total in window', tot, `${ORD.days} days, cancelled included`],
+    ['Cancel rate', (tot ? (100 * fc / tot).toFixed(1) : 0) + '%', `${fc} fully cancelled`],
+    ['Busiest day', best ? best.total_orders : 0, best ? esc(best.bucket) : ''],
+  ];
+  $('#o_cards').innerHTML = cards.map(([k, v, sub]) =>
+    `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
+     <div class="sub">${esc(sub)}</div></div>`).join('');
+  $('#o_daily').innerHTML  = ordTable(d, false);
+  $('#o_weekly').innerHTML = ordTable(w, true);
+  $('#o_dsub').textContent = `— ${ORD.timezone}, newest first; today is partial`;
+  $('#o_src').textContent  = ` Source: ${ORD.source}.`;
+}
+
+async function loadOrders(){
+  try{
+    const r = await fetch(`/api/orders?days=${encodeURIComponent($('#o_days').value)}`);
+    if (!r.ok) throw new Error(`orders API returned ${r.status}`);
+    ORD = await r.json();
+    renderOrders();
+    $('#o_dot').classList.add('on');
+    $('#o_when').textContent = 'updated ' + new Date().toLocaleTimeString();
+  }catch(e){
+    $('#o_dot').classList.remove('on');
+    $('#o_when').textContent = 'failed: ' + e.message;
+    throw e;
+  }
+}
+
+function scheduleOrders(){
+  clearInterval(ordTimer);
+  const secs = +$('#o_live').value;
+  // Only poll while the tab is actually open -- no point querying the warehouse
+  // for a page nobody is looking at.
+  if (secs > 0) ordTimer = setInterval(() => { if (page === 5) loadOrders().catch(() => {}); }, secs * 1000);
+}
+
+$('#o_days').addEventListener('change', () => loadOrders().catch(() => {}));
+$('#o_live').addEventListener('change', scheduleOrders);
+
 async function refresh(){
   try{
     showErr('');
     if (page === 1) await loadTickets();
     else if (page === 2) await loadStats();
     else if (page === 4) await loadAttendance();
+    else if (page === 5) { await loadOrders(); scheduleOrders(); }
     else await loadMedian();
   }catch(e){ showErr(e.message); }
 }
@@ -765,7 +899,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   // The global filter bar is about tickets. None of it applies to whether a
   // person turned up, so leaving it visible on the attendance tab would imply
   // the grid responds to it.
-  $('#filters').style.display = page === 4 ? 'none' : '';
+  $('#filters').style.display = (page === 4 || page === 5) ? 'none' : '';
   refresh();
 });
 

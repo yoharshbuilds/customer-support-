@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import (activity, alerts, attendance, availability, config, db, enrich,
-               roster, signature)
+               orders, roster, signature)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -752,6 +752,23 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
         "agents": order,
         "cells": cells,
     }
+
+
+@app.get("/api/orders")
+async def api_orders(days: int = Query(30, ge=1, le=180)):
+    """Order volume INCLUDING cancelled orders, by day and by week.
+
+    Deliberately different from Plazza Dashboard v4's "Total Order Count", which
+    excludes fully cancelled orders -- verified exactly against Postgres on every
+    complete day. Both figures are returned so they reconcile rather than look
+    like a contradiction.
+    """
+    assert _client is not None
+    try:
+        return await orders.volume(_client, days)
+    except Exception as e:  # noqa: BLE001 -- warehouse hiccup should not 500 the page
+        log.warning("orders volume failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"warehouse query failed: {e}")
 
 
 @app.api_route("/healthz", methods=["GET", "HEAD"])
