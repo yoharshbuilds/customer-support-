@@ -10,6 +10,12 @@
   --accent:#2d6cdf; --good:#1a9a5f; --warn:#c2810a; --bad:#c8452f;
   --s1:#2d6cdf; --s2:#1a9a5f; --s3:#c2810a; --s4:#8b5cd6; --s5:#c8452f;
   --s6:#0d9aa8; --s7:#d1568f; --s8:#6b7280;
+  /* Built-in CSS easings are too weak for UI. Strong curves only. ease-in is
+     never used: it delays the exact moment the user is watching. */
+}
+:root{
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --press: 160ms;
 }
 @media (prefers-color-scheme:dark){
   :root{ --bg:#0f1216; --panel:#161b22; --ink:#e6edf3; --muted:#8b98a5; --line:#262d36; }
@@ -26,7 +32,9 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
 @keyframes pulse{70%{box-shadow:0 0 0 7px rgba(26,154,95,0)}100%{box-shadow:0 0 0 0 rgba(26,154,95,0)}}
 nav{display:flex;gap:2px;margin-left:auto}
 nav button{background:none;border:1px solid transparent;padding:7px 14px;border-radius:7px;
-  cursor:pointer;color:var(--muted);font-size:13px;font-weight:550;font-family:inherit}
+  cursor:pointer;color:var(--muted);font-size:13px;font-weight:550;font-family:inherit;
+  transition:transform var(--press) var(--ease-out),background-color var(--press) var(--ease-out)}
+nav button:active{transform:scale(.97)}
 nav button.sel{background:var(--accent);color:#fff}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;
   padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:57px;z-index:19}
@@ -61,8 +69,12 @@ td.wrap{white-space:normal;min-width:280px;max-width:420px;color:var(--muted)}
 .tag.n{background:rgba(120,130,145,.15);color:var(--muted)}
 a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .scroll{overflow-x:auto;max-height:70vh;overflow-y:auto}
-@keyframes flash{from{background:rgba(26,154,95,.28)}to{background:transparent}}
-tr.new{animation:flash 2.5s ease-out}
+/* Rows stream in from the live feed and can arrive in bursts. A @keyframes
+   animation restarts from zero each time and cannot be retargeted mid-flight, so
+   this is a transition: the row is painted highlighted, then the class is removed
+   and it settles. Interruptible, and the visible motion stays short. */
+tr.new td{background:rgba(26,154,95,.28)}
+tbody tr td{transition:background-color 600ms var(--ease-out)}
 .bars{padding:12px 14px}
 .bar{display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;margin-bottom:7px}
 .bar .lb{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -76,7 +88,9 @@ tr.new{animation:flash 2.5s ease-out}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .pager{display:flex;gap:8px;align-items:center;padding:10px 14px;font-size:12px;color:var(--muted)}
 .pager button{background:var(--bg);border:1px solid var(--line);color:var(--ink);
-  border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px}
+  border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px;
+  transition:transform var(--press) var(--ease-out)}
+.pager button:active:not(:disabled){transform:scale(.97)}
 .pager button:disabled{opacity:.4;cursor:default}
 #fresh{gap:10px;flex-wrap:wrap}
 #fresh b{font-weight:650;color:var(--ink)}
@@ -87,6 +101,10 @@ tr.new{animation:flash 2.5s ease-out}
 .f-lag{background:var(--warn)}
 .err{background:rgba(200,69,47,.1);color:var(--bad);padding:10px 14px;border-radius:8px;margin-bottom:14px}
 
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+}
 /* --- bar charts (orders, issues, ticket flow) --- */
 .chart{padding:14px}
 .crow{display:grid;grid-template-columns:96px 1fr 132px;gap:10px;align-items:center;margin-bottom:5px}
@@ -561,6 +579,15 @@ async function loadTickets(){
   }).join('') : `<tr><td colspan="15" class="empty">No resolved chats in this range.</td></tr>`;
 
   seen = new Set(d.rows.map(r => r.conversation_id));
+  // Paint the arriving rows highlighted, then drop the class on the next frame so
+  // the CSS transition carries them back to normal. A transition (unlike a
+  // keyframe) can be retargeted if another row lands mid-fade, which matters
+  // because the live feed arrives in bursts.
+  if (document.querySelectorAll('tr.new').length){
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      document.querySelectorAll('tr.new').forEach(el => el.classList.remove('new'))));
+  }
+
   $('#pginfo').textContent = d.total
     ? `${offset+1}–${Math.min(offset+d.limit, d.total)} of ${d.total}` : '0 rows';
   $('#prev').disabled = offset === 0;
@@ -844,7 +871,13 @@ async function loadAttendance(){
   if (!r.ok) throw new Error(`attendance API returned ${r.status}`);
   ATT = await r.json();
   if (!ATT.days || !ATT.days.length){
+    // Every panel on the tab needs an empty state, not just the first one. A blank
+    // hour grid reads as a broken page rather than as "no data yet".
     $('#a_grid').innerHTML = '<tbody><tr><td class="empty">No resolve data yet.</td></tr></tbody>';
+    $('#hrgrid').innerHTML = '<tbody><tr><td class="empty">No agent message data yet.</td></tr></tbody>';
+    $('#a_summary').innerHTML = '<tbody><tr><td class="empty">No agents yet.</td></tr></tbody>';
+    $('#a_cards').innerHTML = '';
+    $('#hr_foot').textContent = '';
     return;
   }
   $('#a_shorth').textContent = ATT.short_shift_hours;
@@ -880,7 +913,7 @@ function ordBar(v, max){
 
 function ordTable(rows, isWeek){
   if (!rows || !rows.length) return '<tbody><tr><td class="empty">No orders in this window.</td></tr></tbody>';
-  const max = Math.max(...rows.map(r => r.total_orders));
+  const max = Math.max(1, ...rows.map(r => Number(r.total_orders ?? 0)));
   const head = `<thead><tr>
     <th class="no">${isWeek ? 'Week starting' : 'Date'}</th>
     <th class="no num">Total (incl. cancelled)</th>
@@ -892,17 +925,18 @@ function ordTable(rows, isWeek){
     ${isWeek ? '<th class="no num">Days</th><th class="no num">Avg/day</th>' : ''}
     <th class="no" style="min-width:120px">Volume</th></tr></thead>`;
   const body = rows.map(r => {
-    const rate = r.cancel_rate;
+    const num = v => Number(v ?? 0);
+    const rate = num(r.cancel_rate);
     const tag = rate >= 10 ? 'b' : rate >= 6 ? 'w' : 'g';
-    const avg = isWeek && r.days_in_bucket ? (r.total_orders / r.days_in_bucket).toFixed(0) : '';
+    const avg = isWeek && r.days_in_bucket ? (num(r.total_orders) / r.days_in_bucket).toFixed(0) : '';
     return `<tr>
       <td>${esc(r.bucket)}</td>
-      <td class="num"><b>${r.total_orders}</b></td>
-      <td class="num">${r.fully_cancelled}</td>
-      <td class="num">${r.partly_cancelled}</td>
-      <td class="num">${r.not_cancelled}</td>
+      <td class="num"><b>${num(r.total_orders)}</b></td>
+      <td class="num">${num(r.fully_cancelled)}</td>
+      <td class="num">${num(r.partly_cancelled)}</td>
+      <td class="num">${num(r.not_cancelled)}</td>
       <td class="num"><span class="tag ${tag}">${rate}%</span></td>
-      <td class="num" style="color:var(--muted)">${r.excl_fully_cancelled}</td>
+      <td class="num" style="color:var(--muted)">${num(r.excl_fully_cancelled)}</td>
       ${isWeek ? `<td class="num">${r.days_in_bucket}</td><td class="num">${avg}</td>` : ''}
       <td>${ordBar(r.total_orders, max)}</td></tr>`;
   }).join('');
@@ -1007,8 +1041,10 @@ function renderOrderCharts(){
   const w = (ORD.weekly || []).slice().reverse();
   const dmax = Math.max(1, ...d.map(r => r.total_orders));
   const wmax = Math.max(1, ...w.map(r => r.total_orders));
-  d.forEach(r => r.__note = `${r.total_orders}  (${r.cancel_rate}% cx)`);
-  w.forEach(r => r.__note = `${r.total_orders}  (${r.cancel_rate}% cx)`);
+  const n = v => Number(v ?? 0);
+  const note = r => `${n(r.total_orders)}  (${n(r.cancel_rate)}% cx)`;
+  d.forEach(r => r.__note = note(r));
+  w.forEach(r => r.__note = note(r));
   $('#o_chart').innerHTML  = stackedBars(d, ORD_SEGS, dmax, r => r.bucket.slice(5));
   $('#o_wchart').innerHTML = stackedBars(w, ORD_SEGS, wmax, r => 'wk ' + r.bucket.slice(5));
 }

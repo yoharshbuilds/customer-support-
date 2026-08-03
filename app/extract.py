@@ -42,15 +42,32 @@ def _headers() -> dict:
             "Content-Type": "application/json"}
 
 
+# The limit is one POST per minute PER EVENT. A restart runs the message ingest,
+# the ticket ingest and the reconciler close together, and any test run adds more,
+# so 429 is routine rather than exceptional. Wait it out once instead of losing the
+# pass -- the alternative is a gap in the data for an hour until the next tick.
+RATE_LIMIT_WAIT_SECONDS = 65
+RATE_LIMIT_RETRIES = 1
+
+
 async def fetch(client: httpx.AsyncClient, event: str, start: str, end: str,
                 poll_seconds: int = 15, max_polls: int = 40) -> list[dict]:
     """Run an extract job and return its rows. Raises on a failed trigger."""
-    r = await client.post(f"{config.freshchat_base()}/reports/raw",
-                          headers=_headers(),
-                          json={"start": start, "end": end, "event": event, "format": "csv"},
-                          timeout=60.0)
+    r = None
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        r = await client.post(f"{config.freshchat_base()}/reports/raw",
+                              headers=_headers(),
+                              json={"start": start, "end": end, "event": event,
+                                    "format": "csv"},
+                              timeout=60.0)
+        if r.status_code != 429:
+            break
+        if attempt < RATE_LIMIT_RETRIES:
+            log.info("rate limited on %s, waiting %ds", event, RATE_LIMIT_WAIT_SECONDS)
+            await asyncio.sleep(RATE_LIMIT_WAIT_SECONDS)
+    assert r is not None
     if r.status_code == 429:
-        raise RuntimeError(f"rate limited on {event}: {r.text[:120]}")
+        raise RuntimeError(f"rate limited on {event} after retry: {r.text[:120]}")
     if r.status_code not in (200, 201, 202):
         raise RuntimeError(f"extract trigger failed {r.status_code}: {r.text[:200]}")
     job_id = r.json().get("id")
