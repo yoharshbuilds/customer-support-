@@ -14,7 +14,7 @@ from anthropic import AsyncAnthropic
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import alerts, attendance, config, db, enrich, roster, signature
+from . import alerts, attendance, availability, config, db, enrich, roster, signature
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -37,6 +37,9 @@ _inflight: set[asyncio.Task] = set()
 _hits = {"total": 0, "accepted": 0, "ignored": 0, "rejected": 0,
          "rejected_signature": 0, "rejected_secret": 0, "accepted_unsigned": 0,
          "last_at": None, "last_action": None, "last_reject": None,
+         # Availability capture, split so "the webhook arrived" can be told apart
+         # from "the row was written".
+         "availability_stored": 0, "availability_replays": 0, "availability_failed": 0,
          # Composition of the traffic. One webhook URL receives every event
          # type Freshchat emits, so knowing the mix explains both the volume
          # and how much of it we discard.
@@ -251,6 +254,25 @@ async def freshchat_webhook(request: Request):
         act = (_walk_action(payload) or "unknown")[:60]
         _hits["last_action"] = act
         _hits["by_action"][act] = _hits["by_action"].get(act, 0) + 1
+
+        # Not a resolution, but agent availability changes are the only genuine
+        # sign-in record in the system, so they get stored instead of discarded.
+        # Wrapped: a capture bug must never turn a 200 into a 500, because
+        # Freshchat retries failures and eventually disables the endpoint.
+        if availability.is_availability(payload):
+            try:
+                ev = availability.extract(payload)
+                row_id = db.insert_availability(ev)
+                _hits["availability_stored"] += int(row_id is not None)
+                if row_id is None:
+                    _hits["availability_replays"] += 1
+                log.info("availability %s for agent %s at %s (row %s)",
+                         ev["status"], ev["agent_id"], ev["changed_at"], row_id)
+            except Exception as e:  # noqa: BLE001
+                _hits["availability_failed"] += 1
+                log.warning("availability capture failed: %s", e)
+            return {"ok": True, "stored": "agent availability"}
+
         log.warning("webhook IGNORED (not recognised as a resolution): %s",
                     json.dumps(payload)[:1200])
         return {"ok": True, "ignored": "not a resolution event"}
@@ -460,6 +482,29 @@ def debug_rejects(secret: str = Query("")):
     return {"count": len(_reject_samples), "samples": _reject_samples}
 
 
+@app.get("/debug/availability")
+def debug_availability(secret: str = Query(""), limit: int = Query(20, ge=1, le=100)):
+    """Raw agent availability payloads, so the undocumented shape can be read off.
+
+    This is the point of the whole capture: the public webhook docs list four
+    events and agent availability is not one of them, so the only way to learn
+    which key holds the status and which holds the timestamp is to look at what
+    actually arrives. Gated on the webhook secret -- the payloads name real staff.
+    """
+    if not config.WEBHOOK_SECRET or not hmac.compare_digest(secret, config.WEBHOOK_SECRET):
+        raise HTTPException(status_code=404, detail="not found")
+    stats = db.availability_stats()
+    return {
+        "stats": stats,
+        # If unknown_status or no_agent_id is climbing, the extraction guesses in
+        # availability.py are wrong for the real payload -- fix them and rebuild
+        # the columns from raw.
+        "extraction_healthy": bool(stats.get("events"))
+        and not stats.get("unknown_status") and not stats.get("no_agent_id"),
+        "samples": db.availability_samples(limit),
+    }
+
+
 def _attendance_days(first_day, today, days: int) -> list:
     """The shift days to show, newest first, clipped to where data exists.
 
@@ -503,6 +548,40 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
     for r in rows:
         seen_names.setdefault(r["agent"], r["agent_id"])
 
+    # --- real attendance, where we have it -------------------------------
+    # Availability webhooks give actual sign-in/sign-out. Where a day has them
+    # they win over the activity proxy; elsewhere the proxy still fills in.
+    tz = ZoneInfo(config.TIMEZONE)
+    now_utc = datetime.now(timezone.utc)
+    id_to_name = {p["id"]: p["name"] for p in people if p.get("id")}
+    for r in rows:  # roster name wins, but a departed agent is still nameable
+        id_to_name.setdefault(r["agent_id"], r["agent"])
+
+    avail_by_name: dict[str, dict] = {}
+    unmapped_ids: set[str] = set()
+    try:
+        by_agent: dict[str, list] = {}
+        for ev in db.availability_events(days):
+            by_agent.setdefault(ev["agent_id"], []).append(ev)
+        for aid, evs in by_agent.items():
+            name = id_to_name.get(aid)
+            if not name:
+                # An id we cannot tie to a known agent. Left out rather than
+                # invented as a person -- if the extraction guessed the wrong
+                # field this would otherwise conjure staff out of customer ids.
+                unmapped_ids.add(aid)
+                continue
+            agg = availability.aggregate(
+                availability.sessions_from_events(evs, now_utc, tz))
+            if agg:
+                avail_by_name[name] = agg
+    except Exception as e:  # noqa: BLE001 -- proxy-only is still a working page
+        log.warning("availability overlay failed: %s", e)
+
+    # Someone signed in counts as present even if they resolved nothing.
+    for name in avail_by_name:
+        seen_names.setdefault(name, "")
+
     agents: dict[str, dict] = {}
     for p in people:
         # `expected` -- not merely "on the roster" -- decides who can be absent.
@@ -525,7 +604,33 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
 
     cells: dict[str, dict] = {}
     for r in rows:
-        cells.setdefault(r["agent"], {})[r["day"]] = r
+        cells.setdefault(r["agent"], {})[r["day"]] = {**r, "source": "activity"}
+
+    # Overlay the real record. Hours and the window come from the sign-in data;
+    # the resolve count is kept from the proxy, since that is throughput and the
+    # two answer different questions.
+    for name, per_day in avail_by_name.items():
+        for day, agg in per_day.items():
+            if day not in day_set:
+                continue
+            existing = cells.setdefault(name, {}).get(day, {})
+            first_local = agg["first"].astimezone(tz)
+            last_local = agg["last"].astimezone(tz)
+            span_hrs = round(agg["secs"] / 3600.0, 1)
+            cells[name][day] = {
+                **existing,
+                "agent": name,
+                "day": day,
+                "first": first_local.strftime("%H:%M"),
+                "last": last_local.strftime("%H:%M"),
+                "span_hrs": span_hrs,
+                "resolves": existing.get("resolves", 0),
+                "short": span_hrs < config.SHORT_SHIFT_HOURS,
+                "overnight": last_local.date() != first_local.date(),
+                "sessions": agg["sessions"],
+                "still_open": agg["open"],
+                "source": "availability",
+            }
 
     # The current shift day is still running, so it is excluded from every
     # denominator -- its absences are not absences yet.
@@ -548,6 +653,13 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
         "short_shift_hours": config.SHORT_SHIFT_HOURS,
         "support_role": config.SUPPORT_ROLE,
         "roster_ok": roster_ok,
+        # How much of this grid is a real sign-in record rather than inferred.
+        # Until the availability webhooks have accumulated this is 0 and the page
+        # says so, so nobody mistakes the proxy for a punch clock.
+        "availability_days": sum(
+            1 for c in cells.values() for v in c.values() if v.get("source") == "availability"
+        ),
+        "availability_unmapped_ids": len(unmapped_ids),
         "today": today.isoformat(),
         "data_from": b["first_day"].isoformat() if b.get("first_day") else None,
         "days": [d.isoformat() for d in day_list],
@@ -577,6 +689,9 @@ def healthz():
         "alerts": bool(config.SLACK_WEBHOOK_URL),
         "alert_delivery": dict(alerts.STATS),
         "alert_bar": config.ALERT_MIN_SIGNALS,
+        # Whether the real attendance record is filling up, visible without a
+        # secret so "is capture live yet?" is answerable from outside.
+        "availability": db.availability_stats(),
     }
 
 

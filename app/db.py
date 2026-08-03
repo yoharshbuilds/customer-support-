@@ -112,6 +112,34 @@ ALTER TABLE resolve_events
 CREATE INDEX IF NOT EXISTS idx_resolve_customer ON resolve_events (customer_ref);
 CREATE INDEX IF NOT EXISTS idx_resolve_order    ON resolve_events (order_id);
 CREATE INDEX IF NOT EXISTS idx_resolve_llm      ON resolve_events (llm_issue);
+
+-- Agent sign-in/sign-out, from the agent_availability webhooks Freshchat was
+-- already sending and we were discarding. This is the only real attendance
+-- record in the system; everything else is inferred from resolve activity.
+--
+-- `raw` is stored on every row because the payload shape is undocumented. If the
+-- extracted columns turn out to be wrong, they can be rebuilt from raw instead of
+-- the events being lost.
+CREATE TABLE IF NOT EXISTS agent_availability_events (
+    id          BIGSERIAL PRIMARY KEY,
+    agent_id    TEXT,
+    -- normalised available / unavailable / unknown
+    status      TEXT        NOT NULL,
+    -- exactly what Freshchat sent, for when the normaliser needs correcting
+    raw_status  TEXT,
+    -- when the change happened per the payload; NULL if it did not say
+    changed_at  TIMESTAMPTZ,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    action      TEXT,
+    raw         JSONB       NOT NULL,
+    -- Freshchat retries. A replay must collapse onto the row it already wrote
+    -- rather than becoming a second sign-in.
+    dedupe_key  TEXT        NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_avail_agent_time
+    ON agent_availability_events (agent_id, COALESCE(changed_at, received_at));
+CREATE INDEX IF NOT EXISTS idx_avail_received
+    ON agent_availability_events (received_at DESC);
 """
 
 
@@ -172,6 +200,86 @@ def insert_event(ev: dict) -> int | None:
         )
         row = cur.fetchone()
         return row["id"] if row else None
+
+
+def insert_availability(ev: dict) -> int | None:
+    """Store an agent availability change. Returns row id, or None on a replay."""
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO agent_availability_events
+                (agent_id, status, raw_status, changed_at, action, raw, dedupe_key)
+            VALUES (%(agent_id)s, %(status)s, %(raw_status)s, %(changed_at)s,
+                    %(action)s, %(raw)s, %(dedupe_key)s)
+            ON CONFLICT (dedupe_key) DO NOTHING
+            RETURNING id
+            """,
+            {
+                "agent_id": ev.get("agent_id"),
+                "status": ev["status"],
+                "raw_status": ev.get("raw_status"),
+                "changed_at": ev.get("changed_at"),
+                "action": ev.get("action"),
+                "raw": json.dumps(ev.get("raw") or {}),
+                "dedupe_key": ev["dedupe_key"],
+            },
+        )
+        row = cur.fetchone()
+        return row["id"] if row else None
+
+
+def availability_events(since_days: int) -> list[dict]:
+    """Availability events oldest-first, so sessions can be paired in order.
+
+    Ordered on COALESCE(changed_at, received_at): if the payload does not carry
+    its own timestamp, arrival order is the best available proxy for sequence.
+    """
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT agent_id, status, raw_status, action,
+                   COALESCE(changed_at, received_at) AS effective_at
+            FROM agent_availability_events
+            WHERE COALESCE(changed_at, received_at) >= now() - make_interval(days => %(d)s)
+              AND agent_id IS NOT NULL
+            ORDER BY agent_id, effective_at
+            """,
+            {"d": since_days},
+        )
+        return cur.fetchall()
+
+
+def availability_samples(limit: int = 20) -> list[dict]:
+    """Most recent raw payloads, for working out the undocumented shape."""
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, agent_id, status, raw_status, action, changed_at, received_at, raw
+            FROM agent_availability_events
+            ORDER BY received_at DESC
+            LIMIT %(n)s
+            """,
+            {"n": limit},
+        )
+        return cur.fetchall()
+
+
+def availability_stats() -> dict:
+    """Coverage summary: is capture actually working, and since when?"""
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS events,
+                   COUNT(DISTINCT agent_id) AS agents,
+                   COUNT(*) FILTER (WHERE status = 'unknown')   AS unknown_status,
+                   COUNT(*) FILTER (WHERE agent_id IS NULL)     AS no_agent_id,
+                   COUNT(*) FILTER (WHERE changed_at IS NULL)   AS no_timestamp,
+                   MIN(received_at) AS first_at,
+                   MAX(received_at) AS last_at
+            FROM agent_availability_events
+            """
+        )
+        return cur.fetchone() or {}
 
 
 def update_enrichment(row_id: int, fields: dict, error: str | None = None) -> None:
