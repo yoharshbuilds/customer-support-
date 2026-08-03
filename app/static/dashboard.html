@@ -79,6 +79,27 @@ tr.new{animation:flash 2.5s ease-out}
   border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit;font-size:12px}
 .pager button:disabled{opacity:.4;cursor:default}
 .err{background:rgba(200,69,47,.1);color:var(--bad);padding:10px 14px;border-radius:8px;margin-bottom:14px}
+/* --- attendance grid --- */
+.note{background:rgba(194,129,10,.12);border:1px solid rgba(194,129,10,.3);
+  padding:11px 14px;border-radius:9px;margin-bottom:16px;font-size:13px}
+.note b{color:var(--warn)}
+#p4 table{border-collapse:separate;border-spacing:0}
+#p4 th.agent,#p4 td.agent{position:sticky;left:0;background:var(--panel);z-index:3;
+  min-width:170px;border-right:1px solid var(--line)}
+#p4 th.agent{z-index:4}
+#p4 th.day{text-align:center;min-width:74px}
+#p4 th.day small{display:block;font-size:9px;font-weight:600;opacity:.75;letter-spacing:.04em}
+#p4 th.today{color:var(--accent)}
+#p4 td.cell{text-align:center;padding:4px;font-variant-numeric:tabular-nums}
+#p4 tbody tr:hover td.agent{background:rgba(45,108,223,.07)}
+.pill{display:block;border-radius:6px;padding:4px 2px;font-size:12px;font-weight:600;line-height:1.25}
+.pill .r{display:block;font-size:10px;font-weight:500;opacity:.8}
+.p-full{background:rgba(26,154,95,.16);color:var(--good)}
+.p-short{background:rgba(194,129,10,.18);color:var(--warn)}
+.p-abs{color:var(--muted);opacity:.45;font-weight:500}
+.p-nil{color:var(--muted);opacity:.25}
+.aname{font-weight:600}
+.foot{padding:9px 14px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -90,6 +111,7 @@ tr.new{animation:flash 2.5s ease-out}
     <button data-p="1" class="sel">Tickets</button>
     <button data-p="2">Issue breakdown</button>
     <button data-p="3">Median time</button>
+    <button data-p="4">Attendance</button>
   </nav>
 </header>
 
@@ -187,6 +209,53 @@ tr.new{animation:flash 2.5s ease-out}
       <h2>Median resolution time by day</h2>
       <div id="legend" class="legend"></div>
       <div id="chart"></div>
+    </div>
+  </section>
+
+  <!-- Page 4: attendance. Uses its own controls -- the global filters above are
+       about tickets, and none of them apply to whether a person turned up. -->
+  <section class="page" id="p4">
+    <div class="filters" style="position:static;border-radius:10px;border:1px solid var(--line);margin-bottom:16px">
+      <div class="f"><label>Window</label>
+        <select id="a_days">
+          <option value="7">Last 7 days</option>
+          <option value="14" selected>Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select></div>
+      <div class="f"><label>Show</label>
+        <select id="a_who">
+          <option value="support">Support role only</option>
+          <option value="all" selected>Everyone who worked</option>
+        </select></div>
+    </div>
+
+    <div class="note">
+      <b>Derived from resolve activity, not a sign-in record.</b>
+      Nothing here logs when an agent starts work, so “present” means the agent resolved at
+      least one chat during that shift day, and the window is first→last resolve. An agent who
+      worked on chats someone else closed reads as absent, and idle time inside a shift is
+      invisible. Treat it as a floor on attendance.
+      <span id="a_notemeta"></span>
+    </div>
+
+    <div class="cards" id="a_cards"></div>
+
+    <div class="panel">
+      <h2>Attendance grid <span id="a_sub" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div class="legend">
+        <span><i class="sw" style="background:rgba(26,154,95,.16)"></i> full shift</span>
+        <span><i class="sw" style="background:rgba(194,129,10,.18)"></i> short (&lt;<span id="a_shorth">4</span>h)</span>
+        <span><i class="sw" style="background:rgba(120,130,145,.2)"></i> no activity</span>
+        <span>· hours on top, chats resolved below</span>
+        <span>· 🌙 shift crossed midnight</span>
+      </div>
+      <div class="scroll"><table id="a_grid"></table></div>
+      <div class="foot" id="a_foot"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Per-agent summary</h2>
+      <div class="scroll"><table id="a_summary"></table></div>
     </div>
   </section>
 </main>
@@ -380,11 +449,129 @@ async function loadMedian(){
 }
 
 /* ---------- orchestration ---------- */
+/* ---------- attendance ---------- */
+let ATT = null;
+
+function attDayLabel(iso){
+  const d = new Date(iso + 'T00:00:00');
+  return {dow: d.toLocaleDateString(undefined,{weekday:'short'}),
+          md: d.toLocaleDateString(undefined,{day:'2-digit',month:'short'})};
+}
+
+function attAgents(){
+  return $('#a_who').value === 'all' ? ATT.agents : ATT.agents.filter(a => a.is_support);
+}
+
+function attCards(){
+  const ags = attAgents();
+  // Only rostered support agents count toward headcount -- an Owner holding a
+  // Freshchat seat is not a missing shift.
+  const roster = ags.filter(a => a.expected);
+  const full = ATT.days.filter(d => d !== ATT.today);
+  let avg = 0;
+  if (full.length){
+    const total = full.reduce((s,d) => s + ags.filter(a => (ATT.cells[a.name]||{})[d]).length, 0);
+    avg = (total / full.length).toFixed(1);
+  }
+  const todayN = ags.filter(a => (ATT.cells[a.name]||{})[ATT.today]).length;
+  const never = roster.filter(a => !a.ever_active);
+  const cards = [
+    ['Support agents', roster.length, ATT.roster_ok ? `role “${ATT.support_role}”` : 'roster unavailable'],
+    ['Avg present / day', avg, `across ${full.length} completed day${full.length===1?'':'s'}`],
+    ['Active today', todayN, 'day still in progress'],
+    ['Never active in window', never.length, never.length ? never.map(a=>a.name).join(', ') : '—'],
+  ];
+  $('#a_cards').innerHTML = cards.map(([k,v,sub]) =>
+    `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>
+     <div class="sub">${esc(sub)}</div></div>`).join('');
+}
+
+function attGrid(){
+  const ags = attAgents();
+  if (!ags.length){ $('#a_grid').innerHTML = '<tbody><tr><td class="empty">No agents to show.</td></tr></tbody>'; return; }
+  const head = ['<thead><tr><th class="agent no">Agent</th>'];
+  for (const d of ATT.days){
+    const {dow, md} = attDayLabel(d);
+    const isToday = d === ATT.today;
+    head.push(`<th class="day no${isToday?' today':''}">${esc(dow)}<small>${esc(md)}${isToday?' · now':''}</small></th>`);
+  }
+  head.push('</tr></thead>');
+
+  const body = ['<tbody>'];
+  for (const a of ags){
+    const mine = ATT.cells[a.name] || {};
+    let tags = '';
+    if (!a.in_roster) tags = '<span class="tag n">ex-roster</span>';
+    else if (!a.is_support) tags = `<span class="tag">${esc(a.role || 'other role')}</span>`;
+    body.push(`<tr><td class="agent"><span class="aname">${esc(a.name)}</span>${tags}</td>`);
+    for (const d of ATT.days){
+      const c = mine[d];
+      if (c){
+        body.push(`<td class="cell" title="${esc(c.first)}–${esc(c.last)} · ${c.resolves} resolved">`
+          + `<span class="pill ${c.short?'p-short':'p-full'}">${c.span_hrs}h${c.overnight?' 🌙':''}`
+          + `<span class="r">${c.resolves}</span></span></td>`);
+      } else if (d === ATT.today){
+        body.push('<td class="cell"><span class="pill p-nil" title="Shift day still in progress">·</span></td>');
+      } else if (!a.expected){
+        // No shift was expected of them, so this is blank -- not an absence.
+        body.push('<td class="cell"><span class="pill p-nil" title="Not rostered as support">·</span></td>');
+      } else {
+        body.push('<td class="cell"><span class="pill p-abs" title="No chats resolved this shift day">—</span></td>');
+      }
+    }
+    body.push('</tr>');
+  }
+  body.push('</tbody>');
+  $('#a_grid').innerHTML = head.join('') + body.join('');
+  $('#a_sub').textContent =
+    `— shift day starts ${String(ATT.shift_start_hour).padStart(2,'0')}:00 ${ATT.timezone}`;
+  $('#a_foot').textContent = `Data covers ${ATT.data_from} → ${ATT.today} (current day partial). `
+    + 'A night shift is filed under the day it started, so 22:00–05:00 is one shift.';
+}
+
+function attSummary(){
+  const rows = attAgents().map(a => {
+    // No denominator for anyone never rostered on -- a rate there would measure
+    // them against a shift nobody asked them to work.
+    const rate = a.days_expected ? Math.round(100 * a.days_present / a.days_expected) : null;
+    const tag = rate == null ? '<span class="tag n">not rostered</span>'
+      : rate >= 80 ? `<span class="tag g">${rate}%</span>`
+      : rate >= 50 ? `<span class="tag w">${rate}%</span>`
+      : `<span class="tag n">${rate}%</span>`;
+    return `<tr>
+      <td><span class="aname">${esc(a.name)}</span>${a.in_roster?'':'<span class="tag n">ex-roster</span>'}
+        ${a.is_support?'':`<span class="tag">${esc(a.role || 'other')}</span>`}</td>
+      <td class="num">${a.days_present}${a.days_expected?` / ${a.days_expected}`:''}</td>
+      <td>${tag}</td>
+      <td class="num">${a.total_hrs}h</td>
+      <td class="num">${a.avg_span_hrs}h</td>
+      <td class="num">${a.resolves}</td></tr>`;
+  }).join('');
+  $('#a_summary').innerHTML = `<thead><tr><th class="agent no">Agent</th><th class="no">Days present</th>
+    <th class="no">Rate</th><th class="no">Total hours</th><th class="no">Avg shift</th>
+    <th class="no">Resolved</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+async function loadAttendance(){
+  const r = await fetch(`/api/attendance?days=${encodeURIComponent($('#a_days').value)}`);
+  if (!r.ok) throw new Error(`attendance API returned ${r.status}`);
+  ATT = await r.json();
+  if (!ATT.days || !ATT.days.length){
+    $('#a_grid').innerHTML = '<tbody><tr><td class="empty">No resolve data yet.</td></tr></tbody>';
+    return;
+  }
+  $('#a_shorth').textContent = ATT.short_shift_hours;
+  $('#a_notemeta').textContent = ATT.roster_ok ? ''
+    : ' The Freshchat roster could not be loaded, so absences are not shown.';
+  attCards(); attGrid(); attSummary();
+}
+
 async function refresh(){
   try{
     showErr('');
     if (page === 1) await loadTickets();
     else if (page === 2) await loadStats();
+    else if (page === 4) await loadAttendance();
     else await loadMedian();
   }catch(e){ showErr(e.message); }
 }
@@ -408,8 +595,17 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('sel', x === b));
   page = +b.dataset.p;
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p'+page));
+  // The global filter bar is about tickets. None of it applies to whether a
+  // person turned up, so leaving it visible on the attendance tab would imply
+  // the grid responds to it.
+  $('#filters').style.display = page === 4 ? 'none' : '';
   refresh();
 });
+
+$('#a_days').addEventListener('change', () => refresh());
+// Role filtering is client-side: the payload already has everyone, so there is
+// no reason to round-trip.
+$('#a_who').addEventListener('change', () => { if (ATT){ attCards(); attGrid(); attSummary(); } });
 $('#filters').addEventListener('change', e => {
   const custom = $('#range').value === 'custom';
   $('#fromwrap').style.display = custom ? '' : 'none';

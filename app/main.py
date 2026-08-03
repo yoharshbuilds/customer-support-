@@ -14,7 +14,7 @@ from anthropic import AsyncAnthropic
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import alerts, config, db, enrich, signature
+from . import alerts, attendance, config, db, enrich, roster, signature
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -458,6 +458,102 @@ def debug_rejects(secret: str = Query("")):
     if not config.WEBHOOK_SECRET or not hmac.compare_digest(secret, config.WEBHOOK_SECRET):
         raise HTTPException(status_code=404, detail="not found")
     return {"count": len(_reject_samples), "samples": _reject_samples}
+
+
+def _attendance_days(first_day, today, days: int) -> list:
+    """The shift days to show, newest first, clipped to where data exists.
+
+    Clipping matters: a day before the earliest resolve is a day we have no data
+    for, which must not render as a day the whole team was absent.
+    """
+    out = [today - timedelta(days=i) for i in range(days)]
+    if first_day is not None:
+        out = [d for d in out if d >= first_day]
+    return out
+
+
+@app.get("/api/attendance")
+async def api_attendance(days: int = Query(14, ge=1, le=120)):
+    """Daily attendance derived from resolve activity.
+
+    A proxy, not a sign-in record -- nothing here logs when an agent starts work.
+    "Present" means the agent resolved at least one chat during that shift day,
+    so someone who worked a full shift on chats a colleague closed reads as
+    absent. It is a floor on attendance, and the page says so.
+    """
+    b = attendance.bounds()
+    today = b.get("today_shift_day")
+    if today is None:
+        return {"days": [], "agents": [], "cells": {}, "note": "no resolve data yet"}
+
+    rows = attendance.rows(days)
+    try:
+        assert _client is not None
+        people = await roster.fetch(_client)
+        roster_ok = True
+    except Exception as e:  # noqa: BLE001 -- the grid is still useful without it
+        log.warning("roster fetch failed: %s", e)
+        people, roster_ok = [], False
+
+    day_list = _attendance_days(b.get("first_day"), today, days)
+    day_set = {d.isoformat() for d in day_list}
+    rows = [r for r in rows if r["day"] in day_set]
+
+    seen_names: dict[str, str] = {}
+    for r in rows:
+        seen_names.setdefault(r["agent"], r["agent_id"])
+
+    agents: dict[str, dict] = {}
+    for p in people:
+        # `expected` -- not merely "on the roster" -- decides who can be absent.
+        # Owners and Admins have Freshchat seats but never work the queue, so
+        # counting them made three people permanently absent.
+        agents[p["name"]] = {**p, "in_roster": True, "expected": p["is_support"],
+                             "ever_active": False}
+    for name, aid in seen_names.items():
+        if name in agents:
+            agents[name]["ever_active"] = True
+        else:
+            # Resolved chats but not on the active roster: deactivated since.
+            agents[name] = {"id": aid, "name": name, "email": None, "role": None,
+                            "is_support": False, "availability_status": None,
+                            "login_status": None, "in_roster": False,
+                            "expected": False, "ever_active": True}
+
+    # A non-support seat that resolved nothing is noise, not an absence.
+    agents = {n: a for n, a in agents.items() if a["expected"] or a["ever_active"]}
+
+    cells: dict[str, dict] = {}
+    for r in rows:
+        cells.setdefault(r["agent"], {})[r["day"]] = r
+
+    # The current shift day is still running, so it is excluded from every
+    # denominator -- its absences are not absences yet.
+    full_days = [d.isoformat() for d in day_list if d != today]
+    for name, a in agents.items():
+        mine = cells.get(name, {})
+        present_days = [d for d in full_days if d in mine]
+        a["days_present"] = len(present_days)
+        a["days_expected"] = len(full_days) if a["expected"] else None
+        a["resolves"] = sum(mine[d]["resolves"] for d in mine)
+        spans = [mine[d]["span_hrs"] for d in present_days]
+        a["avg_span_hrs"] = round(sum(spans) / len(spans), 1) if spans else 0.0
+        a["total_hrs"] = round(sum(spans), 1)
+
+    order = sorted(agents.values(), key=lambda a: (-a["days_present"], -a["resolves"], a["name"]))
+
+    return {
+        "shift_start_hour": config.SHIFT_START_HOUR,
+        "timezone": config.TIMEZONE,
+        "short_shift_hours": config.SHORT_SHIFT_HOURS,
+        "support_role": config.SUPPORT_ROLE,
+        "roster_ok": roster_ok,
+        "today": today.isoformat(),
+        "data_from": b["first_day"].isoformat() if b.get("first_day") else None,
+        "days": [d.isoformat() for d in day_list],
+        "agents": order,
+        "cells": cells,
+    }
 
 
 @app.api_route("/healthz", methods=["GET", "HEAD"])

@@ -66,6 +66,20 @@ TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 TOP_N_ISSUES = int(os.getenv("TOP_N_ISSUES", "8"))
 ENRICH_RETRY_SECONDS = int(os.getenv("ENRICH_RETRY_SECONDS", "120"))
 
+# --- Attendance page ---
+# A shift starting 22:00 and ending 05:00 is ONE shift, and it belongs to the day
+# it started. Bucketing on the calendar date instead splits it across midnight
+# and reports a 23.9-hour span for a 7-hour night. Everything from this hour to
+# the same hour next morning is one "shift day".
+SHIFT_START_HOUR = int(os.getenv("SHIFT_START_HOUR", "6"))
+# Below this many hours of observed activity a present agent is flagged rather
+# than counted as a full shift. A prompt to go look, not a judgement.
+SHORT_SHIFT_HOURS = float(os.getenv("SHORT_SHIFT_HOURS", "4"))
+# The Freshchat role that means "works the support queue". Owners and Admins hold
+# seats but no shifts, so only this role can be marked absent. Anyone else who
+# resolves chats is still shown -- an Owner does work this queue.
+SUPPORT_ROLE = os.getenv("SUPPORT_ROLE", "Customer Delight").strip()
+
 
 def _normalize_base(url: str) -> str:
     """Tolerate a hand-edited env file that lost its scheme.
