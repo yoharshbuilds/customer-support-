@@ -88,6 +88,14 @@ SUPPORT_ROLE = os.getenv("SUPPORT_ROLE", "Customer Delight").strip()
 MAX_SESSION_HOURS = float(os.getenv("MAX_SESSION_HOURS", "12"))
 
 
+# Every warehouse query goes to Redshift. It carries the same rds_public tables
+# as the Postgres instance and is exactly as fresh -- both reported the same
+# max(order_placed_at) to the millisecond -- while db 7's analytics schema is
+# stale (analytics.orders_comparison there ends 2025-06-21). Redshift is also what
+# Plazza Dashboard v4 reads, so numbers agree with what the team already sees.
+METABASE_REDSHIFT_DB_ID = int(os.getenv("METABASE_REDSHIFT_DB_ID", "8"))
+
+
 def _normalize_base(url: str) -> str:
     """Tolerate a hand-edited env file that lost its scheme.
 

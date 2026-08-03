@@ -1,7 +1,16 @@
 """Order volume, including cancelled orders, day by day and week by week.
 
-Source is rds_public.order_batches on the live Postgres warehouse (Metabase
-database 7), queried through the Metabase dataset API.
+Source is rds_public.order_batches on Metabase's REDSHIFT connection, queried
+through the dataset API. Redshift carries the same table as the Postgres instance
+and is exactly as fresh -- both reported the same max(order_placed_at) to the
+millisecond -- and it is what Plazza Dashboard v4 reads, so these numbers agree
+with what the team already sees. Verified identical on eight consecutive days:
+totals 488/604/636/520/524/549/557/562 and fully-cancelled 28/36/49/35/29/45/45/47
+matched Postgres exactly.
+
+Redshift dialect, which differs from Postgres in three ways that matter here:
+FILTER is unsupported (use SUM(CASE ...)), timezone conversion is
+CONVERT_TIMEZONE rather than AT TIME ZONE, and intervals are DATEADD.
 
 Why not the sources the existing Plazza Dashboard v4 uses:
 
@@ -39,11 +48,11 @@ _cache: dict[str, tuple[float, dict]] = {}
 _PER_ORDER = """
 WITH per_order AS (
     SELECT order_id,
-           MIN(order_placed_at)                             AS placed,
-           COUNT(*)                                         AS batches,
-           COUNT(*) FILTER (WHERE status = 'cancelled')     AS cancelled_batches
+           MIN(order_placed_at)                                    AS placed,
+           COUNT(*)                                                AS batches,
+           SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END)    AS cancelled_batches
     FROM rds_public.order_batches
-    WHERE order_placed_at >= now() - make_interval(days => %(days)s)
+    WHERE order_placed_at >= DATEADD(day, -%(days)s, GETDATE())
     GROUP BY order_id
 )
 """
@@ -51,25 +60,27 @@ WITH per_order AS (
 # %%(days)s is doubled because these strings go through Python %% formatting
 # before Metabase ever sees them.
 SQL_DAILY = _PER_ORDER + """
-SELECT (placed AT TIME ZONE '%(tz)s')::date::text                        AS bucket,
+SELECT TO_CHAR(CONVERT_TIMEZONE('%(tz)s', placed), 'YYYY-MM-DD')          AS bucket,
        COUNT(*)                                                          AS total_orders,
-       COUNT(*) FILTER (WHERE cancelled_batches = batches)               AS fully_cancelled,
-       COUNT(*) FILTER (WHERE cancelled_batches > 0
-                          AND cancelled_batches < batches)               AS partly_cancelled,
-       COUNT(*) FILTER (WHERE cancelled_batches = 0)                     AS not_cancelled
+       SUM(CASE WHEN cancelled_batches = batches THEN 1 ELSE 0 END)      AS fully_cancelled,
+       SUM(CASE WHEN cancelled_batches > 0
+                 AND cancelled_batches < batches THEN 1 ELSE 0 END)      AS partly_cancelled,
+       SUM(CASE WHEN cancelled_batches = 0 THEN 1 ELSE 0 END)            AS not_cancelled
 FROM per_order
 GROUP BY 1
 ORDER BY 1 DESC
 """
 
 SQL_WEEKLY = _PER_ORDER + """
-SELECT date_trunc('week', (placed AT TIME ZONE '%(tz)s'))::date::text     AS bucket,
+SELECT TO_CHAR(DATE_TRUNC('week', CONVERT_TIMEZONE('%(tz)s', placed)),
+               'YYYY-MM-DD')                                             AS bucket,
        COUNT(*)                                                          AS total_orders,
-       COUNT(*) FILTER (WHERE cancelled_batches = batches)               AS fully_cancelled,
-       COUNT(*) FILTER (WHERE cancelled_batches > 0
-                          AND cancelled_batches < batches)               AS partly_cancelled,
-       COUNT(*) FILTER (WHERE cancelled_batches = 0)                     AS not_cancelled,
-       COUNT(DISTINCT (placed AT TIME ZONE '%(tz)s')::date)               AS days_in_bucket
+       SUM(CASE WHEN cancelled_batches = batches THEN 1 ELSE 0 END)      AS fully_cancelled,
+       SUM(CASE WHEN cancelled_batches > 0
+                 AND cancelled_batches < batches THEN 1 ELSE 0 END)      AS partly_cancelled,
+       SUM(CASE WHEN cancelled_batches = 0 THEN 1 ELSE 0 END)            AS not_cancelled,
+       COUNT(DISTINCT TO_CHAR(CONVERT_TIMEZONE('%(tz)s', placed), 'YYYY-MM-DD'))
+                                                                         AS days_in_bucket
 FROM per_order
 GROUP BY 1
 ORDER BY 1 DESC
@@ -80,7 +91,8 @@ async def _query(client: httpx.AsyncClient, sql: str) -> list[dict]:
     r = await client.post(
         f"{config.metabase_base()}/api/dataset",
         headers={"x-api-key": config.METABASE_API_KEY, "Content-Type": "application/json"},
-        json={"database": config.METABASE_DB_ID, "type": "native", "native": {"query": sql}},
+        json={"database": config.METABASE_REDSHIFT_DB_ID, "type": "native",
+              "native": {"query": sql}},
         timeout=120.0,
     )
     r.raise_for_status()
@@ -119,7 +131,7 @@ async def volume(client: httpx.AsyncClient, days: int) -> dict:
         "days": days,
         "daily": daily,
         "weekly": weekly,
-        "source": "rds_public.order_batches (live Postgres)",
+        "source": "rds_public.order_batches (Metabase Redshift)",
     }
     _cache[key] = (time.monotonic(), out)
     return out
