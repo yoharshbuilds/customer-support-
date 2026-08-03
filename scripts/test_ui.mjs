@@ -202,6 +202,18 @@ check(`no UI transition over 700ms (found: ${longTransitions.join(',') || 'none'
       longTransitions.length === 0);
 check('row highlight is a transition, not a keyframe', !/tr\.new\{animation/.test(html));
 
+section('nav must stay reachable as tabs are added');
+const navTabs = (html.match(/data-p="\d"/g) || []).length;
+check(`nav has ${navTabs} tabs`, navTabs >= 6);
+check('nav scrolls horizontally rather than overflowing',
+      /nav\{[^}]*overflow-x:\s*auto/.test(html));
+check('nav buttons do not shrink or wrap mid-label',
+      /nav button\{[^}]*flex:\s*0 0 auto/.test(html));
+check('narrow screens give the nav its own row',
+      /@media \(max-width:\s*820px\)/.test(html));
+check('nav is not left dependent on margin-left:auto alone',
+      /nav\{[^}]*max-width:\s*100%/.test(html));
+
 console.log(`\n${TOTAL - FAILS.length}/${TOTAL} passed`);
 if (FAILS.length) {
   console.log('\nFAILED:');

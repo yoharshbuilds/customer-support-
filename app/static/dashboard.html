@@ -30,7 +30,21 @@ h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .dot.on{background:var(--good);box-shadow:0 0 0 0 rgba(26,154,95,.6);animation:pulse 2s infinite}
 @keyframes pulse{70%{box-shadow:0 0 0 7px rgba(26,154,95,0)}100%{box-shadow:0 0 0 0 rgba(26,154,95,0)}}
-nav{display:flex;gap:2px;margin-left:auto}
+/* Six tabs no longer fit a narrow window. With margin-left:auto and no wrap the
+   last three sat past the right edge with no way to reach them -- Orders was
+   simply unreachable below ~600px. The strip now scrolls horizontally and takes
+   its own line when the header runs out of room. */
+nav{display:flex;gap:2px;margin-left:auto;max-width:100%;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+nav::-webkit-scrollbar{display:none}
+nav button{flex:0 0 auto;white-space:nowrap}
+@media (max-width:820px){
+  header{gap:8px}
+  nav{margin-left:0;width:100%;order:3;
+    /* fade the right edge so it is obvious there is more to scroll to */
+    mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent);
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 18px),transparent)}
+}
 nav button{background:none;border:1px solid transparent;padding:7px 14px;border-radius:7px;
   cursor:pointer;color:var(--muted);font-size:13px;font-weight:550;font-family:inherit;
   transition:transform var(--press) var(--ease-out),background-color var(--press) var(--ease-out)}
