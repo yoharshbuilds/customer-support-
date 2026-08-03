@@ -101,6 +101,23 @@ tr.new{animation:flash 2.5s ease-out}
 /* A real sign-in record, not inferred from resolve activity. Outlined so the
    two can never be read as the same kind of number. */
 .p-real{box-shadow:inset 0 0 0 1.5px var(--good)}
+/* Resolve-derived only -- the weakest evidence, dotted to say so. */
+.p-weak{box-shadow:inset 0 0 0 1px var(--line);opacity:.8}
+/* hour-wise coverage grid */
+#hrgrid{width:100%;border-collapse:separate;border-spacing:1px;font-size:11px}
+#hrgrid th{font-size:9px;font-weight:650;color:var(--muted);text-align:center;
+  padding:3px 0;background:var(--panel);text-transform:none;letter-spacing:0}
+#hrgrid th.hagent,#hrgrid td.hagent{text-align:left;min-width:150px;padding-right:8px;
+  position:sticky;left:0;background:var(--panel);z-index:2;font-size:12px;border:0}
+#hrgrid td{padding:0;height:20px;text-align:center;border:0;
+  font-variant-numeric:tabular-nums;border-radius:3px}
+#hrgrid td.q0{background:rgba(120,130,145,.10);color:transparent}
+#hrgrid td.q1{background:rgba(45,108,223,.20);color:var(--ink)}
+#hrgrid td.q2{background:rgba(45,108,223,.40);color:var(--ink)}
+#hrgrid td.q3{background:rgba(45,108,223,.62);color:#fff}
+#hrgrid td.q4{background:rgba(45,108,223,.85);color:#fff}
+#hrgrid tr.total td{background:transparent;color:var(--muted);font-weight:650;font-size:10px}
+#hrgrid td.shiftstart{box-shadow:inset 2px 0 0 var(--warn)}
 .p-open::after{content:'●';font-size:8px;vertical-align:2px;margin-left:2px;opacity:.7}
 .ok{background:rgba(26,154,95,.12);border:1px solid rgba(26,154,95,.3);
   padding:11px 14px;border-radius:9px;margin-bottom:16px;font-size:13px}
@@ -239,12 +256,12 @@ tr.new{animation:flash 2.5s ease-out}
     <div id="a_real"></div>
 
     <div class="note" id="a_note">
-      <b id="a_noteb">Derived from resolve activity, not a sign-in record.</b>
-      This measures time <b>available to take chats</b>, not time at work — an agent who is
-      logged in but unavailable (on a break, or doing admin work) does not count here.
-      Where the cell is not outlined there is no sign-in data, so “present” means the agent
-      resolved at least one chat that shift day and the window is first→last resolve; someone
-      who worked on chats a colleague closed reads as absent. Treat those as a floor.
+      <b id="a_noteb">Presence is measured from agent message activity: first text → last text.</b>
+      It is still not a sign-in record — an agent reading, calling, or doing admin work without
+      texting is invisible, and idle time inside the window is counted. Hours are a window, not
+      time worked. Cells outlined in green come from real Freshchat sign-in data and are exact;
+      cells with a faint grey outline have no message data and fall back to first→last
+      <i>resolve</i>, which badly understates anyone whose chats a colleague closed.
       <span id="a_notemeta"></span>
     </div>
 
@@ -264,6 +281,22 @@ tr.new{animation:flash 2.5s ease-out}
       </div>
       <div class="scroll"><table id="a_grid"></table></div>
       <div class="foot" id="a_foot"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Hour-wise coverage
+        <span class="role" style="text-transform:none;letter-spacing:0">
+          — agent messages per hour<span id="hr_tz"></span></span>
+      </h2>
+      <div class="legend">
+        <span>Shift day</span>
+        <span><select id="hr_day" style="min-width:150px"></select></span>
+        <span>· darker = more messages</span>
+        <span><i class="sw" style="background:rgba(120,130,145,.10)"></i> no messages</span>
+        <span><i class="sw" style="box-shadow:inset 2px 0 0 var(--warn)"></i> shift day starts</span>
+      </div>
+      <div class="scroll"><table id="hrgrid"></table></div>
+      <div class="foot" id="hr_foot"></div>
     </div>
 
     <div class="panel">
@@ -521,14 +554,19 @@ function attGrid(){
       const c = mine[d];
       if (c){
         const real = c.source === 'availability';
+        const msgs = c.source === 'messages';
         const cls = (c.short ? 'p-short' : 'p-full') + (real ? ' p-real' : '')
-          + (c.still_open ? ' p-open' : '');
+          + (c.still_open ? ' p-open' : '') + (!real && !msgs ? ' p-weak' : '');
         const title = real
           ? `Signed in ${c.first}–${c.last}${c.still_open ? ' (still signed in)' : ''}`
             + ` · ${c.sessions} session${c.sessions===1?'':'s'} · ${c.resolves} resolved`
             + (c.capped ? ' · never went unavailable, so this is truncated at the'
                         + ' end of the shift day — hours are a floor' : '')
-          : `${c.first}–${c.last} (first→last resolve, inferred) · ${c.resolves} resolved`;
+          : msgs
+          ? `${c.first}–${c.last} (first→last message) · ${c.messages} messages across `
+            + `${c.conversations} chats · ${c.resolves} resolved`
+          : `${c.first}–${c.last} (first→last resolve — weakest signal, no message data) `
+            + `· ${c.resolves} resolved`;
         body.push(`<td class="cell" title="${esc(title)}">`
           + `<span class="pill ${cls}">${c.capped?'≥':''}${c.span_hrs}h${c.overnight?' 🌙':''}`
           + `<span class="r">${c.resolves}</span></span></td>`);
@@ -570,9 +608,99 @@ function attSummary(){
       <td class="num">${a.resolves}</td></tr>`;
   }).join('');
   $('#a_summary').innerHTML = `<thead><tr><th class="agent no">Agent</th><th class="no">Days present</th>
-    <th class="no">Rate</th><th class="no" title="Time available to take chats, not time at work"
-    >Available hours</th><th class="no">Avg shift</th>
+    <th class="no">Rate</th><th class="no" title="First text to last text, or exact signed-in time where available"
+    >Active hours</th><th class="no">Avg shift</th>
     <th class="no">Resolved</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+/* Hours are ordered from the shift-day start, not from midnight, so a night
+   shift reads as one contiguous run instead of wrapping at the right edge. */
+function shiftHourOrder(){
+  const s = ATT.shift_start_hour || 0;
+  return Array.from({length: 24}, (_, i) => (s + i) % 24);
+}
+
+function hrBucket(n, max){
+  if (!n) return 'q0';
+  const r = n / (max || 1);
+  return r > 0.6 ? 'q4' : r > 0.35 ? 'q3' : r > 0.15 ? 'q2' : 'q1';
+}
+
+function renderHours(){
+  const sel = $('#hr_day');
+  const day = sel.value;
+  const hourly = ATT.hourly || {};
+  const order = shiftHourOrder();
+
+  // Agents with any message activity that day, busiest first.
+  const rows = attAgents()
+    .map(a => ({a, h: (hourly[a.name] || {})[day] || {}}))
+    .filter(x => Object.keys(x.h).length)
+    .sort((x, y) => sum(y.h) - sum(x.h));
+
+  if (!rows.length){
+    $('#hrgrid').innerHTML =
+      '<tbody><tr><td class="empty">No message activity for this shift day.</td></tr></tbody>';
+    $('#hr_foot').textContent = ATT.message_days
+      ? 'Message data has not been ingested for this day yet.'
+      : 'No agent message data stored yet — the hourly ingest fills this in.';
+    return;
+  }
+  const max = Math.max(...rows.flatMap(x => Object.values(x.h).map(Number)));
+
+  const head = ['<thead><tr><th class="hagent no">Agent</th>'];
+  for (const h of order){
+    head.push(`<th class="no${h === ATT.shift_start_hour ? ' shiftstart' : ''}">`
+      + String(h).padStart(2, '0') + '</th>');
+  }
+  head.push('<th class="no">total</th></tr></thead>');
+
+  const body = ['<tbody>'];
+  for (const {a, h} of rows){
+    body.push(`<tr><td class="hagent">${esc(a.name)}</td>`);
+    for (const hr of order){
+      const n = Number(h[hr] || 0);
+      body.push(`<td class="${hrBucket(n, max)}${hr === ATT.shift_start_hour ? ' shiftstart' : ''}"`
+        + ` title="${esc(a.name)} · ${String(hr).padStart(2,'0')}:00 · ${n} message${n===1?'':'s'}">`
+        + `${n || ''}</td>`);
+    }
+    body.push(`<td class="hagent" style="text-align:right;padding-left:8px">${sum(h)}</td></tr>`);
+  }
+  // Team coverage: how many agents were texting in each hour.
+  body.push('<tr class="total"><td class="hagent">agents active</td>');
+  for (const hr of order){
+    const n = rows.filter(x => Number(x.h[hr] || 0) > 0).length;
+    body.push(`<td title="${n} agent${n===1?'':'s'} texting at ${String(hr).padStart(2,'0')}:00">`
+      + `${n || '·'}</td>`);
+  }
+  body.push('<td></td></tr></tbody>');
+  $('#hrgrid').innerHTML = head.join('') + body.join('');
+
+  const gaps = order.filter(hr => !rows.some(x => Number(x.h[hr] || 0) > 0));
+  $('#hr_foot').textContent = gaps.length
+    ? `No agent sent a message in ${gaps.length} hour${gaps.length===1?'':'s'}: `
+      + gaps.map(h => String(h).padStart(2,'0') + ':00').join(', ')
+    : 'Every hour of this shift day had at least one agent texting.';
+}
+
+function sum(obj){ return Object.values(obj).reduce((a, b) => a + Number(b), 0); }
+
+function fillHourDays(){
+  const sel = $('#hr_day');
+  const prev = sel.value;
+  // Only days that actually have message data are offered.
+  const withData = ATT.days.filter(d =>
+    Object.values(ATT.hourly || {}).some(per => per && per[d]));
+  const days = withData.length ? withData : ATT.days;
+  sel.innerHTML = days.map(d => {
+    const {dow, md} = attDayLabel(d);
+    return `<option value="${esc(d)}">${esc(dow)} ${esc(md)}`
+      + `${d === ATT.today ? ' (partial)' : ''}</option>`;
+  }).join('');
+  // Default to the newest COMPLETE day: today is still filling up.
+  sel.value = days.includes(prev) ? prev
+    : (days.find(d => d !== ATT.today) || days[0] || '');
+  $('#hr_tz').textContent = `, ${ATT.timezone}`;
 }
 
 async function loadAttendance(){
@@ -599,10 +727,10 @@ async function loadAttendance(){
   // Set deterministically from state, not by rewriting the previous text -- a
   // second load would otherwise have nothing left to match and stick.
   $('#a_noteb').textContent = real
-    ? 'Cells without an outline are inferred, not a sign-in record.'
-    : 'Derived from resolve activity, not a sign-in record.';
+    ? 'Green-outlined cells are exact sign-in data; the rest are message-derived.'
+    : 'Presence is measured from agent message activity: first text \u2192 last text.';
 
-  attCards(); attGrid(); attSummary();
+  attCards(); attGrid(); attSummary(); fillHourDays(); renderHours();
 }
 
 async function refresh(){
@@ -644,7 +772,10 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 $('#a_days').addEventListener('change', () => refresh());
 // Role filtering is client-side: the payload already has everyone, so there is
 // no reason to round-trip.
-$('#a_who').addEventListener('change', () => { if (ATT){ attCards(); attGrid(); attSummary(); } });
+$('#a_who').addEventListener('change', () => {
+  if (ATT){ attCards(); attGrid(); attSummary(); renderHours(); }
+});
+$('#hr_day').addEventListener('change', () => { if (ATT) renderHours(); });
 $('#filters').addEventListener('change', e => {
   const custom = $('#range').value === 'custom';
   $('#fromwrap').style.display = custom ? '' : 'none';

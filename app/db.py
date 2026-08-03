@@ -142,6 +142,31 @@ CREATE TABLE IF NOT EXISTS agent_availability_events (
 -- as logged out.
 ALTER TABLE agent_availability_events
     ADD COLUMN IF NOT EXISTS login_status BOOLEAN;
+
+-- Every message an agent sent, from the Extract API's Message-Sent event.
+--
+-- This is the attendance signal that actually works. Resolves were a bad proxy:
+-- on 1 Aug it reported Ansila Lissie as 0.0 hours and Sumayya A as absent, while
+-- they had sent 125 and 113 messages across full shifts. An agent texts all
+-- through a shift even on chats a colleague closes.
+--
+-- One row per message, ~900/day, so a month is ~28k rows -- small enough to keep
+-- raw rather than pre-aggregating, which keeps the hour-wise view exact.
+CREATE TABLE IF NOT EXISTS agent_message_events (
+    id              BIGSERIAL PRIMARY KEY,
+    agent_id        TEXT        NOT NULL,
+    agent_name      TEXT,
+    conversation_id TEXT,
+    sent_at         TIMESTAMPTZ NOT NULL,
+    source          TEXT        NOT NULL,
+    -- Message-Sent carries no message id (interaction_id is per interaction, not
+    -- per message), so the key is derived from the message's own content. Makes
+    -- re-running an overlapping ingest a no-op instead of double counting.
+    dedupe_key      TEXT        NOT NULL UNIQUE,
+    ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_amsg_agent_time ON agent_message_events (agent_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_amsg_sent       ON agent_message_events (sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_avail_agent_time
     ON agent_availability_events (agent_id, COALESCE(changed_at, received_at));
 CREATE INDEX IF NOT EXISTS idx_avail_received
@@ -270,6 +295,96 @@ def availability_samples(limit: int = 20) -> list[dict]:
             {"n": limit},
         )
         return cur.fetchall()
+
+
+_SHIFT_DAY_MSG = "((sent_at AT TIME ZONE %(tz)s) - make_interval(hours => %(shift_hour)s))::date"
+
+
+def insert_agent_messages(rows: list[dict]) -> int:
+    """Bulk insert agent messages. Returns how many were new.
+
+    ON CONFLICT DO NOTHING on dedupe_key, so an ingest window that overlaps a
+    previous run costs nothing -- which is what makes the hourly catch-up safe
+    to run with deliberate overlap.
+    """
+    if not rows:
+        return 0
+    with cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO agent_message_events
+                (agent_id, agent_name, conversation_id, sent_at, source, dedupe_key)
+            VALUES (%(agent_id)s, %(agent_name)s, %(conversation_id)s, %(sent_at)s,
+                    %(source)s, %(dedupe_key)s)
+            ON CONFLICT (dedupe_key) DO NOTHING
+            """,
+            rows,
+        )
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+def message_activity(days: int, tz: str, shift_hour: int) -> list[dict]:
+    """Per agent per shift day: first message, last message, span, count."""
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT agent_id,
+                   MAX(agent_name)                        AS agent_name,
+                   {_SHIFT_DAY_MSG}                       AS shift_day,
+                   MIN(sent_at)                           AS first_at,
+                   MAX(sent_at)                           AS last_at,
+                   COUNT(*)                               AS messages,
+                   COUNT(DISTINCT conversation_id)         AS conversations
+            FROM agent_message_events
+            WHERE {_SHIFT_DAY_MSG} > (
+                    (now() AT TIME ZONE %(tz)s - make_interval(hours => %(shift_hour)s))::date
+                    - make_interval(days => %(days)s))
+            GROUP BY agent_id, 3
+            ORDER BY 3 DESC, 6 DESC
+            """,
+            {"tz": tz, "shift_hour": shift_hour, "days": days},
+        )
+        return cur.fetchall()
+
+
+def message_hourly(days: int, tz: str, shift_hour: int) -> list[dict]:
+    """Per agent per shift day per local hour: message count.
+
+    Local hour, not UTC: a shift-coverage view is only meaningful in the hours
+    the team actually works.
+    """
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT agent_id,
+                   {_SHIFT_DAY_MSG}                                        AS shift_day,
+                   EXTRACT(HOUR FROM (sent_at AT TIME ZONE %(tz)s))::int    AS hour,
+                   COUNT(*)                                                AS messages
+            FROM agent_message_events
+            WHERE {_SHIFT_DAY_MSG} > (
+                    (now() AT TIME ZONE %(tz)s - make_interval(hours => %(shift_hour)s))::date
+                    - make_interval(days => %(days)s))
+            GROUP BY agent_id, 2, 3
+            ORDER BY 2 DESC, 3
+            """,
+            {"tz": tz, "shift_hour": shift_hour, "days": days},
+        )
+        return cur.fetchall()
+
+
+def message_stats() -> dict:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS messages,
+                   COUNT(DISTINCT agent_id) AS agents,
+                   MIN(sent_at) AS oldest,
+                   MAX(sent_at) AS newest,
+                   MAX(ingested_at) AS last_ingest
+            FROM agent_message_events
+            """
+        )
+        return cur.fetchone() or {}
 
 
 def availability_stats() -> dict:

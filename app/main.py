@@ -14,7 +14,8 @@ from anthropic import AsyncAnthropic
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import alerts, attendance, availability, config, db, enrich, roster, signature
+from . import (activity, alerts, attendance, availability, config, db, enrich,
+               roster, signature)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("resolve-dashboard")
@@ -110,6 +111,28 @@ async def _retry_sweeper() -> None:
             log.warning("retry sweeper error: %s", e)
 
 
+async def _message_ingest() -> None:
+    """Keep agent message activity current from the Extract API.
+
+    Polled rather than pushed because the Extract API is the only source of
+    Message-Sent, and it is a batch job -- POST, poll, download a ZIP. Far too
+    slow to run on a dashboard request, so it runs hourly in the background and
+    the page reads whatever has been stored.
+
+    Each pass re-ingests a few hours of overlap. Duplicates collide on
+    dedupe_key and cost nothing, which is cheaper than missing a boundary.
+    """
+    # Let the app finish starting before the first (slow) extract job.
+    await asyncio.sleep(20)
+    while True:
+        try:
+            assert _client is not None
+            await activity.catch_up(_client)
+        except Exception as e:  # noqa: BLE001 -- never kill the loop on one bad pass
+            log.warning("message ingest failed: %s", e)
+        await asyncio.sleep(activity.INGEST_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _client, _llm
@@ -130,9 +153,11 @@ async def lifespan(_: FastAPI):
                if config.ALLOW_UNVERIFIED_WEBHOOK else "")
         )
     task = asyncio.create_task(_retry_sweeper())
+    ingest_task = asyncio.create_task(_message_ingest())
     log.info("ready")
     yield
     task.cancel()
+    ingest_task.cancel()
     await _client.aclose()
     if _llm is not None:
         await _llm.close()
@@ -578,8 +603,32 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
     except Exception as e:  # noqa: BLE001 -- proxy-only is still a working page
         log.warning("availability overlay failed: %s", e)
 
-    # Someone signed in counts as present even if they resolved nothing.
+    # --- presence from message activity ----------------------------------
+    # first text -> last text. Strictly better than resolves: on 1 Aug the
+    # resolve proxy called Sumayya A absent and Ansila Lissie 0.0h while they had
+    # sent 113 and 125 messages across full shifts.
+    msg_by_name: dict[str, dict] = {}
+    msg_hourly_by_name: dict[str, dict] = {}
+    try:
+        msg_rows = activity.attendance_rows(days)
+        msg_hours = activity.hourly(days)
+        for aid, per_day in msg_rows.items():
+            name = id_to_name.get(aid) or next(
+                (v.get("agent_name") for v in per_day.values() if v.get("agent_name")), None)
+            if not name:
+                unmapped_ids.add(aid)
+                continue
+            id_to_name.setdefault(aid, name)
+            msg_by_name[name] = per_day
+            if aid in msg_hours:
+                msg_hourly_by_name[name] = msg_hours[aid]
+    except Exception as e:  # noqa: BLE001 -- the grid still works without it
+        log.warning("message activity overlay failed: %s", e)
+
+    # Someone signed in, or texting, counts as present even if they resolved nothing.
     for name in avail_by_name:
+        seen_names.setdefault(name, "")
+    for name in msg_by_name:
         seen_names.setdefault(name, "")
 
     agents: dict[str, dict] = {}
@@ -605,6 +654,34 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
     cells: dict[str, dict] = {}
     for r in rows:
         cells.setdefault(r["agent"], {})[r["day"]] = {**r, "source": "activity"}
+
+    # Overlay message activity over the resolve proxy. Applied BEFORE
+    # availability, so a real sign-in record still wins where one exists:
+    # availability > messages > resolves, weakest first.
+    for name, per_day in msg_by_name.items():
+        for day, m in per_day.items():
+            if day not in day_set:
+                continue
+            existing = cells.setdefault(name, {}).get(day, {})
+            first_local = m["first_at"].astimezone(tz)
+            last_local = m["last_at"].astimezone(tz)
+            cells[name][day] = {
+                **existing,
+                "agent": name,
+                "day": day,
+                "first": first_local.strftime("%H:%M"),
+                "last": last_local.strftime("%H:%M"),
+                "span_hrs": m["span_hrs"],
+                # Resolves stay as throughput; they are no longer what presence
+                # is derived from.
+                "resolves": existing.get("resolves", 0),
+                "messages": m["messages"],
+                "conversations": m["conversations"],
+                "short": m["span_hrs"] < config.SHORT_SHIFT_HOURS,
+                "overnight": last_local.date() != first_local.date(),
+                "hours": (msg_hourly_by_name.get(name) or {}).get(day, {}),
+                "source": "messages",
+            }
 
     # Overlay the real record. Hours and the window come from the sign-in data;
     # the resolve count is kept from the proxy, since that is throughput and the
@@ -662,7 +739,13 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
         "availability_days": sum(
             1 for c in cells.values() for v in c.values() if v.get("source") == "availability"
         ),
+        "message_days": sum(
+            1 for c in cells.values() for v in c.values() if v.get("source") == "messages"
+        ),
         "availability_unmapped_ids": len(unmapped_ids),
+        # Local-hour buckets, so the UI can show coverage by hour without a
+        # second round trip.
+        "hourly": msg_hourly_by_name,
         "today": today.isoformat(),
         "data_from": b["first_day"].isoformat() if b.get("first_day") else None,
         "days": [d.isoformat() for d in day_list],
@@ -695,6 +778,8 @@ def healthz():
         # Whether the real attendance record is filling up, visible without a
         # secret so "is capture live yet?" is answerable from outside.
         "availability": db.availability_stats(),
+        # Agent message activity -- the presence signal the attendance tab uses.
+        "agent_messages": db.message_stats(),
     }
 
 
