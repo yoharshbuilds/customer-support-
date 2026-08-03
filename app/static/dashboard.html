@@ -240,23 +240,24 @@ tr.new{animation:flash 2.5s ease-out}
 
     <div class="note" id="a_note">
       <b id="a_noteb">Derived from resolve activity, not a sign-in record.</b>
-      Nothing here logs when an agent starts work, so “present” means the agent resolved at
-      least one chat during that shift day, and the window is first→last resolve. An agent who
-      worked on chats someone else closed reads as absent, and idle time inside a shift is
-      invisible. Treat it as a floor on attendance.
+      This measures time <b>available to take chats</b>, not time at work — an agent who is
+      logged in but unavailable (on a break, or doing admin work) does not count here.
+      Where the cell is not outlined there is no sign-in data, so “present” means the agent
+      resolved at least one chat that shift day and the window is first→last resolve; someone
+      who worked on chats a colleague closed reads as absent. Treat those as a floor.
       <span id="a_notemeta"></span>
     </div>
 
     <div class="cards" id="a_cards"></div>
 
     <div class="panel">
-      <h2>Attendance grid <span id="a_sub" style="text-transform:none;letter-spacing:0"></span></h2>
+      <h2>Availability grid <span id="a_sub" style="text-transform:none;letter-spacing:0"></span></h2>
       <div class="legend">
         <span><i class="sw" style="background:rgba(26,154,95,.16)"></i> full shift</span>
         <span><i class="sw" style="background:rgba(194,129,10,.18)"></i> short (&lt;<span id="a_shorth">4</span>h)</span>
         <span><i class="sw" style="background:rgba(120,130,145,.2)"></i> no activity</span>
         <span><i class="sw" style="box-shadow:inset 0 0 0 1.5px var(--good)"></i> real sign-in record</span>
-        <span>· hours on top, chats resolved below</span>
+        <span>· available hours on top, chats resolved below</span>
         <span>· 🌙 shift crossed midnight</span>
         <span>· ● still signed in</span>
         <span>· ≥ never went unavailable, hours truncated</span>
@@ -569,7 +570,8 @@ function attSummary(){
       <td class="num">${a.resolves}</td></tr>`;
   }).join('');
   $('#a_summary').innerHTML = `<thead><tr><th class="agent no">Agent</th><th class="no">Days present</th>
-    <th class="no">Rate</th><th class="no">Total hours</th><th class="no">Avg shift</th>
+    <th class="no">Rate</th><th class="no" title="Time available to take chats, not time at work"
+    >Available hours</th><th class="no">Avg shift</th>
     <th class="no">Resolved</th></tr></thead><tbody>${rows}</tbody>`;
 }
 
