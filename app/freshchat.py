@@ -35,6 +35,15 @@ async def _get(client: httpx.AsyncClient, path: str, **params):
     return r.json()
 
 
+async def post(client: httpx.AsyncClient, path: str, body: dict) -> dict:
+    """POST to Freshchat. The only write this service makes."""
+    r = await client.post(
+        f"{config.freshchat_base()}{path}", headers=_headers(), json=body, timeout=20.0
+    )
+    r.raise_for_status()
+    return r.json() if r.content else {}
+
+
 async def fetch_conversation(client: httpx.AsyncClient, conversation_id: str) -> dict:
     return await _get(client, f"/conversations/{conversation_id}")
 

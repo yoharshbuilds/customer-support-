@@ -57,6 +57,11 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 # the channel gets noisy; no redeploy needed.
 ALERT_MIN_SIGNALS = int(os.getenv("ALERT_MIN_SIGNALS", "2"))
 
+# --- Post-resolution survey ---
+# OFF by default and deliberately so: turning this on sends messages to real
+# customers. Nothing goes out until it is explicitly enabled on the host.
+CSAT_ENABLED = os.getenv("CSAT_ENABLED", "").lower() in ("1", "true", "yes")
+
 # --- Behaviour ---
 # Model that reviews each resolved transcript. Env-overridable so the model can
 # be changed from the Render dashboard without a redeploy of new code.
@@ -86,6 +91,22 @@ SUPPORT_ROLE = os.getenv("SUPPORT_ROLE", "Customer Delight").strip()
 # of its own shift day, then flagged, so a forgotten toggle shows up as a data
 # problem instead of as overtime.
 MAX_SESSION_HOURS = float(os.getenv("MAX_SESSION_HOURS", "12"))
+
+# First local day whose resolutions we hold in full.
+#
+# The solve rate needs to know when capture became COMPLETE, which is not the same
+# as when it started. Deriving it from MIN(resolved_at) + 1 day put the boundary at
+# 28 Jul, and the ticket chart then reported the team solving 1.5% of tickets on
+# 28 Jul and 40.3% on 29 Jul. Those are holes in our capture, not the team's work:
+# the webhook only began firing reliably part-way through, and scripts/test_integrity.py
+# confirmed 30 Jul onwards matches Freshchat's own export exactly while 27-29 Jul
+# does not (34.5% / 1.5% / 40.3% of the resolutions Freshchat has).
+#
+# So the derived boundary is a floor, never the whole answer. Days before this are
+# shown as raised-only in neutral grey rather than as a catastrophic solve rate.
+# Backfilling 27-29 Jul from the Extract API would let this move earlier; until
+# then, understating our coverage is the safe direction to be wrong in.
+RESOLVE_COMPLETE_FROM = os.getenv("RESOLVE_COMPLETE_FROM", "2026-07-30").strip() or None
 
 
 # Every warehouse query goes to Redshift. It carries the same rds_public tables

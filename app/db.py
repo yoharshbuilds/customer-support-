@@ -97,7 +97,15 @@ ALTER TABLE resolve_events
     ADD COLUMN IF NOT EXISTS llm_empathy              TEXT,
     ADD COLUMN IF NOT EXISTS llm_proactive            TEXT,
     ADD COLUMN IF NOT EXISTS llm_escalation_risk      BOOLEAN,
-    ADD COLUMN IF NOT EXISTS llm_escalation_handled   BOOLEAN;
+    ADD COLUMN IF NOT EXISTS llm_escalation_handled   BOOLEAN,
+
+    -- Our own post-resolution survey. csat_answer uses the same vocabulary as
+    -- llm_resolution so the customer's verdict and the model's can be compared
+    -- directly.
+    ADD COLUMN IF NOT EXISTS csat_sent_at        TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS csat_answer         TEXT,
+    ADD COLUMN IF NOT EXISTS csat_answered_at    TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS csat_comment        TEXT;
 
 ALTER TABLE order_dim
     ADD COLUMN IF NOT EXISTS n_batches      INTEGER,
@@ -476,6 +484,69 @@ def ticket_flow(days: int, tz: str) -> list[dict]:
         return cur.fetchall()
 
 
+def ticket_flow_weekly(days: int, tz: str, boundary: str | None) -> list[dict]:
+    """The same figures bucketed by ISO week, to sit under the daily chart.
+
+    Not summed from the daily rows. `raised` and `raised_and_solved` would add up
+    correctly, but `resolved_that_day` comes from a LEFT JOIN keyed on days that
+    have inflow, so a day with resolutions and no new tickets contributes nothing
+    to the daily total and summing would quietly lose it. Weeks are truncated the
+    same way app/orders.py truncates them -- DATE_TRUNC('week'), Monday start --
+    so the order and ticket week rows line up on screen.
+
+    `boundary` is the first day of complete resolve capture. A week that straddles
+    it is measured for part of its span, so the split is counted PER DAY inside the
+    week rather than judged on the week's start date: marking the whole week
+    unmeasured would have thrown away four good days and drawn one 990-tall grey
+    bar that dwarfed every real week. measured_raised is therefore <= raised, and
+    the difference is the part we genuinely cannot speak to.
+    """
+    with cursor() as cur:
+        cur.execute(
+            """
+            WITH created AS (
+                SELECT conversation_id,
+                       (created_at AT TIME ZONE %(tz)s)::date AS d,
+                       DATE_TRUNC('week', created_at AT TIME ZONE %(tz)s)::date AS w
+                FROM ticket_created_events
+                WHERE created_at >= now() - make_interval(days => %(days)s)
+            ),
+            solved AS (
+                SELECT DISTINCT conversation_id FROM resolve_events
+            ),
+            resolved_by_week AS (
+                SELECT DATE_TRUNC('week', resolved_at AT TIME ZONE %(tz)s)::date AS w,
+                       COUNT(*) AS n
+                FROM resolve_events
+                WHERE resolved_at >= now() - make_interval(days => %(days)s)
+                GROUP BY 1
+            )
+            SELECT c.w::text                                      AS bucket,
+                   COUNT(*)                                       AS raised,
+                   COUNT(*) FILTER (
+                       -- cast on the first use too: a bare parameter in
+                       -- "IS NOT NULL" gives Postgres no type to infer from and
+                       -- the query dies with AmbiguousParameter.
+                       WHERE %(boundary)s::date IS NOT NULL
+                         AND c.d >= %(boundary)s::date)           AS measured_raised,
+                   COUNT(s.conversation_id) FILTER (
+                       -- cast on the first use too: a bare parameter in
+                       -- "IS NOT NULL" gives Postgres no type to infer from and
+                       -- the query dies with AmbiguousParameter.
+                       WHERE %(boundary)s::date IS NOT NULL
+                         AND c.d >= %(boundary)s::date)           AS raised_and_solved,
+                   COALESCE(MAX(r.n), 0)                          AS resolved_that_day
+            FROM created c
+            LEFT JOIN solved s ON s.conversation_id = c.conversation_id
+            LEFT JOIN resolved_by_week r ON r.w = c.w
+            GROUP BY c.w
+            ORDER BY c.w DESC
+            """,
+            {"tz": tz, "days": days, "boundary": boundary},
+        )
+        return cur.fetchall()
+
+
 def ticket_flow_stats() -> dict:
     with cursor() as cur:
         cur.execute("""SELECT COUNT(*) AS tickets, MIN(created_at) AS oldest,
@@ -553,6 +624,43 @@ def pending_enrichment(limit: int = 25) -> list[dict]:
             (limit,),
         )
         return cur.fetchall()
+
+
+def mark_csat_sent(conversation_id: str) -> None:
+    """Stamp the most recent resolve of this conversation as surveyed."""
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE resolve_events SET csat_sent_at = now()
+             WHERE id = (SELECT id FROM resolve_events
+                          WHERE conversation_id = %s ORDER BY resolved_at DESC LIMIT 1)
+            """,
+            (conversation_id,),
+        )
+
+
+def record_csat_response(conversation_id: str, answer: str, raw_text: str) -> bool:
+    """Record a survey answer. False if this conversation was never surveyed.
+
+    Guarding on ``csat_sent_at IS NOT NULL`` matters: without it any customer
+    who happens to type "solved it" in an unrelated chat would be recorded as
+    survey feedback. ``csat_answer IS NULL`` keeps the first answer rather than
+    the last, so a customer changing their mind cannot overwrite the response.
+    """
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE resolve_events
+               SET csat_answer = %s, csat_answered_at = now(), csat_comment = %s
+             WHERE id = (SELECT id FROM resolve_events
+                          WHERE conversation_id = %s
+                            AND csat_sent_at IS NOT NULL
+                            AND csat_answer IS NULL
+                          ORDER BY csat_sent_at DESC LIMIT 1)
+            """,
+            (answer, raw_text, conversation_id),
+        )
+        return cur.rowcount > 0
 
 
 def get_order_dim(order_id: str) -> dict | None:
