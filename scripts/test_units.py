@@ -33,64 +33,76 @@ def section(name: str) -> None:
 
 # ---------------------------------------------------------------- issues
 def test_issues() -> None:
-    section("issues.classify: every tag maps, nothing silently absorbed")
-    for tag, want in list(issues.TAG_MAP.items()):
-        if want == issues.VAGUE:
-            continue
-        got, ev = issues.classify(tag, None)
-        check(f"tag -> {want}: {tag[:44]}", got == want and ev == "agent_tag")
+    section("issues.classify: the transcript category wins outright")
+    for c in issues.CATEGORIES:
+        got, ev = issues.classify(c["key"])
+        check(f"category -> {c['key']}", got == c["key"] and ev == "transcript")
+    check("case and whitespace tolerated",
+          issues.classify("  LATE_DELIVERY ") == ("late_delivery", "transcript"))
 
-    section("issues.classify: vague tags defer to the LLM, not to a shrug")
-    check("vague + specific llm uses llm",
-          issues.classify("General - Others", "order_delay") == ("delay", "llm"))
-    check("vague + llm 'other' + no root cause is not a real bucket",
-          issues.classify("General - Others", "other")[0] in ("no_issue", "unclassified"))
+    section("issues.classify: the agent tag is never consulted")
+    # The old cascade read the tag first. Passing a tag-shaped string as the
+    # category must NOT resolve -- it should fall through to the legacy bridge.
+    check("a tag string is not a category",
+          issues.classify("Order Delay", "refund")[0] == "return_refund")
+    check("tag alone resolves to nothing",
+          issues.classify("Order Delay", None, None)[0] == "unclassified")
+
+    section("issues.classify: legacy rows bridge from the old enum")
+    for legacy, want in issues.LEGACY_MAP.items():
+        got, ev = issues.classify(None, legacy)
+        check(f"legacy {legacy} -> {want}", got == want and ev == "legacy")
+    check("legacy is case-insensitive",
+          issues.classify(None, "ORDER_DELAY")[0] == "late_delivery")
+    check("LEGACY_MAP deliberately excludes 'other'", "other" not in issues.LEGACY_MAP)
 
     section("issues.classify: unknown/degenerate inputs stay total")
-    for bad in (None, "", "   ", "Some Brand New Tag 2027", "\n\t"):
+    for bad in (None, "", "   ", "brand_new_category_2027", "\n\t"):
         got, _ = issues.classify(bad, None)
-        check(f"unknown tag {bad!r} -> valid bucket", got in issues.BUCKET_KEYS)
-    check("both None -> unclassified", issues.classify(None, None)[0] == "unclassified")
-    check("llm value unknown falls through",
-          issues.classify(None, "totally_new_label")[0] in issues.BUCKET_KEYS)
-    check("llm case-insensitive", issues.classify(None, "ORDER_DELAY")[0] == "delay")
-    check("llm whitespace tolerated", issues.classify(None, "  refund  ")[0] == "money")
+        check(f"unknown category {bad!r} -> valid key", got in issues.CATEGORY_KEYS)
+    check("all None -> unclassified", issues.classify(None, None)[0] == "unclassified")
 
-    section("issues.classify: root-cause cascade")
-    check("serviceability phrase wins over no-issue",
-          issues.classify("General - Others", "other",
-                          "Customer asked whether Plazza delivers to Patna")[0] == "serviceability")
-    check("no-issue phrase detected",
-          issues.classify("General - Others", "other",
-                          "Customer sent only a thank you after a previously resolved chat")[0] == "no_issue")
+    section("issues.classify: root-cause fallback")
+    check("no-issue phrase -> courtesy",
+          issues.classify(None, "other",
+                          "Customer sent only a thank you after a previously resolved chat")[0]
+          == "courtesy")
+    check("serviceability phrase read",
+          issues.classify(None, "other",
+                          "Customer asked whether Plazza delivers to Patna")[0] == "availability")
     check("unrecognised root cause still lands somewhere real",
-          issues.classify("General - Others", "other", "something entirely novel")[0]
-          in issues.BUCKET_KEYS)
+          issues.classify(None, "other", "something entirely novel")[0]
+          in issues.CATEGORY_KEYS)
 
     section("issues: MECE invariants")
-    check("every bucket has a unique key", len(issues.BUCKET_KEYS) == len(issues.BUCKETS))
-    check("every bucket has a colour", all(b.get("color") for b in issues.BUCKETS))
-    check("colours are unique", len({b["color"] for b in issues.BUCKETS}) == len(issues.BUCKETS))
-    check("every TAG_MAP target is a real bucket or VAGUE",
-          all(v == issues.VAGUE or v in issues.BUCKET_KEYS for v in issues.TAG_MAP.values()))
-    check("every LLM_MAP target is a real bucket",
-          all(v in issues.BUCKET_KEYS for v in issues.LLM_MAP.values()))
-    check("LLM_MAP deliberately excludes 'other'", "other" not in issues.LLM_MAP)
-    check("FAMILY_MAP targets are real buckets",
-          all(v in issues.BUCKET_KEYS for _, v in issues.FAMILY_MAP))
+    check("every key unique", len(issues.CATEGORY_KEYS) == len(issues.CATEGORIES))
+    check("every category has a colour", all(c.get("color") for c in issues.CATEGORIES))
+    check("colours unique", len({c["color"] for c in issues.CATEGORIES}) == len(issues.CATEGORIES))
+    check("model vocabulary matches the keys",
+          set(issues.MODEL_CATEGORIES) == issues.CATEGORY_KEYS)
+    check("every LEGACY_MAP target is a real key",
+          all(v in issues.CATEGORY_KEYS for v in issues.LEGACY_MAP.values()))
+    check("every ROOT_CAUSE_HINTS target is a real key",
+          all(v in issues.CATEGORY_KEYS for _, v in issues.ROOT_CAUSE_HINTS))
+    check("charted + folded covers every category",
+          set(issues.CHARTED) | set(issues.FOLDED) == issues.CATEGORY_KEYS)
+    check("charted and folded do not overlap",
+          not (set(issues.CHARTED) & set(issues.FOLDED)))
+    check("exactly eight charted hues", len(issues.CHARTED) == 8)
 
     section("issues.audit: exhaustive and mutually exclusive")
     rows = [
-        {"issue_type": "Order Delay", "llm_issue": None},
-        {"issue_type": "General - Others", "llm_issue": "refund"},
-        {"issue_type": None, "llm_issue": None},
-        {"issue_type": "Brand New Tag", "llm_issue": "prescription"},
+        {"llm_issue_category": "late_delivery"},
+        {"llm_issue_category": None, "llm_issue": "refund"},
+        {"llm_issue_category": None, "llm_issue": None},
+        {"llm_issue_category": None, "llm_issue": "other",
+         "llm_root_cause": "customer sent only a thank you"},
     ]
     a = issues.audit(rows)
     check("audit total equals input", a["total"] == len(rows))
     check("counts sum to total", sum(a["counts"].values()) == len(rows))
     check("shares sum to ~100", abs(sum(a["share"].values()) - 100.0) < 1.5)
-    check("unmapped tag surfaced, not swallowed", "Brand New Tag" in a["unmapped_tags"])
+    check("transcript_pct reported", a["transcript_pct"] == 25.0)
     check("audit on empty input does not divide by zero", issues.audit([])["total"] == 0)
 
 

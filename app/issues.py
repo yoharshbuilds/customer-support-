@@ -1,157 +1,89 @@
-"""MECE issue taxonomy: every ticket lands in exactly one real bucket.
+"""Issue taxonomy read from the chat transcript, never from the agent's tag.
 
-Neither existing field works alone:
+The previous version cascaded ``issue_type`` (the agent's tag) first and only
+deferred to the model when the tag was one of the vague "... - Others"
+catch-alls. That inherited the tag's problems: agents tag in a hurry, and
+"General - Others" alone was the second largest tag in the window.
 
-  * `issue_type` (the agent's tag) has 47 values with overlapping "... - Others"
-    catch-alls. "General - Others" alone is the second largest tag, so using tags
-    directly leaves a huge vague bucket.
-  * `llm_issue` is cleaner (14 values) but has NULLs where the model call failed
-    and an "other" bucket of its own.
+So the tag is now unused for classification. Every ticket is categorised from
+what was actually said in the chat:
 
-So classification is a cascade, most specific evidence first:
+  1. ``llm_issue_category`` — analyze.py asks the model to pick exactly one of
+     the categories below, straight from the transcript. This is the real source.
+  2. a bridge from the older ``llm_issue`` enum, for rows written before that
+     field existed. Reported as ``legacy`` evidence so the audit shows how much
+     of the window is bridged rather than freshly classified.
 
-  1. the agent's tag, when the tag names a real problem
-  2. the LLM's classification, when the tag is one of the vague catch-alls
-  3. the tag's FAMILY prefix ("Delivery Related - ...", "Medicine Related - ...")
-     which still carries real information even when the suffix is "Others"
+The bridge is lossy in one known place and it is better to say so than to hide
+it: the old enum's ``missing_or_wrong_item`` cannot distinguish a missing item
+from a wrong or damaged one, so bridged rows all land in "Missing items in
+delivery". Rows classified natively split the two correctly.
 
-Every one of the 47 observed tags is mapped explicitly rather than by keyword
-guessing, so a new tag shows up as UNMAPPED in the audit instead of being
-silently absorbed. Buckets are mutually exclusive by construction (one bucket per
-tag) and collectively exhaustive via the cascade.
+Buckets are mutually exclusive (one per ticket) and collectively exhaustive
+(the cascade always returns a key). Derived from a 4,403-ticket read of the
+30-day window; the ordering below is descending by observed volume, which is
+also the display and stacking order.
+
+Colours are the first eight slots of the validated categorical palette, in a
+CVD-checked order, plus greys for the tail that the chart folds into "Other".
 """
 from __future__ import annotations
 
-# Ordered: this is also the display order. Colours are chosen so the semantics
-# read at a glance -- time problems amber, money green, destructive red, and the
-# data-quality bucket deliberately drab so it never looks like a real category.
-BUCKETS: list[dict] = [
-    {"key": "delay",         "label": "Fulfilment delay",     "color": "#c2810a"},
-    {"key": "prescription",  "label": "Prescription & Rx",    "color": "#8b5cd6"},
-    {"key": "cancel_return", "label": "Cancellation & return", "color": "#c8452f"},
-    {"key": "order_change",  "label": "Order changes",        "color": "#2d6cdf"},
-    {"key": "item",          "label": "Item problems",        "color": "#0d9aa8"},
-    {"key": "money",         "label": "Refunds & payments",   "color": "#1a9a5f"},
-    {"key": "serviceability", "label": "Serviceability & partner", "color": "#d1568f"},
-    {"key": "technical",     "label": "App & technical",      "color": "#5b6ee1"},
-    {"key": "no_contact",    "label": "No customer contact",  "color": "#8b98a5"},
-    {"key": "no_issue",      "label": "No issue raised",      "color": "#6b7280"},
-    {"key": "unclassified",  "label": "Unclassified",         "color": "#3f4550"},
+# Display and stack order: descending by observed volume.
+CATEGORIES: list[dict] = [
+    {"key": "late_delivery",  "label": "Late delivery & ETA chase",   "color": "#2a78d6"},
+    {"key": "courtesy",       "label": "Courtesy & no-content",       "color": "#eb6834"},
+    {"key": "prescription",   "label": "Prescription validation",     "color": "#1baf7a"},
+    {"key": "cancel_request", "label": "Cancellation request",        "color": "#eda100"},
+    {"key": "missing_items",  "label": "Missing items in delivery",   "color": "#e87ba4"},
+    {"key": "order_change",   "label": "Order change request",        "color": "#008300"},
+    {"key": "payment_app",    "label": "Payment, app & invoice",      "color": "#4a3aa7"},
+    {"key": "return_refund",  "label": "Return & refund request",     "color": "#e34948"},
+    # The tail. The stacked chart folds these into a single neutral "Other"
+    # band (eight hues is the safe categorical limit); the table lists them out.
+    {"key": "cancelled_by_us", "label": "Order cancelled by Plazza",  "color": "#8d9498"},
+    {"key": "wrong_damaged",  "label": "Wrong or damaged item",       "color": "#7d858a"},
+    {"key": "availability",   "label": "Availability & serviceability", "color": "#6d757a"},
+    {"key": "unclassified",   "label": "Other / unclassified",        "color": "#5d656a"},
 ]
-BUCKET_KEYS = {b["key"] for b in BUCKETS}
-COLORS = {b["key"]: b["color"] for b in BUCKETS}
-LABELS = {b["key"]: b["label"] for b in BUCKETS}
+CATEGORY_KEYS = {c["key"] for c in CATEGORIES}
+COLORS = {c["key"]: c["color"] for c in CATEGORIES}
+LABELS = {c["key"]: c["label"] for c in CATEGORIES}
+# The eight that get their own hue; the rest fold into "Other" in the chart.
+CHARTED = [c["key"] for c in CATEGORIES[:8]]
+FOLDED = [c["key"] for c in CATEGORIES[8:]]
 
-# Sentinel: the tag exists but names nothing specific, so defer to the LLM.
-VAGUE = "__vague__"
+# Back-compat aliases: the module used to export these names.
+BUCKETS = CATEGORIES
+BUCKET_KEYS = CATEGORY_KEYS
 
-TAG_MAP: dict[str, str] = {
-    # --- fulfilment delay ---
-    "Order Delay": "delay",
-    "Delivery Delay": "delay",
-    "ETA Query": "delay",
-    "Order rescheduled": "delay",
-    "Early Delivery Request": "delay",
-    "Delivery Related - Early Delivery Request , Delivery instruction to delivery partner , Rapido (Third Party)": "delay",
-    # --- prescription ---
-    "Prescription Validation Query": "prescription",
-    "Order cancelled due to prescription Invalid": "prescription",
-    "Prescription Upload Issue": "prescription",
-    "Prescription Rx - Others": "prescription",
-    "Order Cancelled due to Restricted Item": "prescription",
-    # --- cancellation & return ---
-    "Order Cancellation Request": "cancel_return",
-    "Order Return Request": "cancel_return",
-    "Order Replacement Request": "cancel_return",
-    # --- order changes ---
-    "Address Change Request": "order_change",
-    "Add Additional Item on Existing Order": "order_change",
-    "Add alternative number at the time of delivery": "order_change",
-    "Delivery Instruction": "order_change",
-    "Wrong Address / Location Issue": "order_change",
-    "COD Option": "order_change",
-    # --- item problems ---
-    "Item Unavailable": "item",
-    "Missing Item in Order": "item",
-    "Wrong Item Delivered": "item",
-    "Partial Order Available": "item",
-    "Item nearly Expiry": "item",
-    "Marked as Delivered but Not Received by Customer": "item",
-    "Medicine Related - Item Unavailable, Partial Available , Alternative Suggested , Medicines Suggested": "item",
-    # --- money ---
-    "Refund Status Check": "money",
-    "Refund Not Received": "money",
-    "Refund Clarification": "money",
-    "Refund Related - Refund Follow-up , Refund status , Refund Clarification": "money",
-    "Invoice Query": "money",
-    "Discount / Coupon Query": "money",
-    "Referral Query": "money",
-    # --- serviceability & delivery partner ---
-    "Non-Serviceable Area": "serviceability",
-    "Delivery Partner Issue (Rapido)": "serviceability",
-    # --- technical ---
-    "Cart Not Updating": "technical",
-    # --- no customer contact ---
-    "No response from Customer": "no_contact",
+# What analyze.py is allowed to return, and how it maps in. Keeping the model's
+# vocabulary identical to the keys means a typo shows up as unclassified instead
+# of being silently coerced.
+MODEL_CATEGORIES = [c["key"] for c in CATEGORIES]
 
-    # --- vague: real tag, no real topic. The LLM decides these. ---
-    "General - Others": VAGUE,
-    "General - Call back request , Non serviceable area , Address Change , Others": VAGUE,
-    "Order Related - Order on WhatsApp , Delay , Cancellation , Replacement , Return, ETA , Order Assistance": VAGUE,
-    "Payment Related - Others": VAGUE,
-    "Refund Related - Others": VAGUE,
-    "Discount & Referral - Others": VAGUE,
-    "App & Technical - Others": VAGUE,
-    "Medicine Related - Others": VAGUE,
-    "Delivery Related - Others": VAGUE,
-}
-
-LLM_MAP: dict[str, str] = {
-    "order_delay": "delay",
-    "delivery_issue": "delay",
-    "prescription": "prescription",
-    "order_cancellation": "cancel_return",
-    "return_or_replacement": "cancel_return",
+# Bridge for rows enriched before llm_issue_category existed.
+LEGACY_MAP: dict[str, str] = {
+    "order_delay": "late_delivery",
+    "delivery_issue": "late_delivery",
+    "order_cancellation": "cancel_request",
     "order_modification": "order_change",
-    "missing_or_wrong_item": "item",
-    "item_unavailable": "item",
-    "refund": "money",
-    "payment": "money",
-    "discount_or_referral": "money",
-    "app_or_technical": "technical",
-    "product_or_medicine_query": "item",
-    # "other" is deliberately absent: it is not evidence, so it falls through to
-    # the family hint below.
+    "return_or_replacement": "return_refund",
+    "refund": "return_refund",
+    # Lossy: the old enum merged missing with wrong/damaged. See module docstring.
+    "missing_or_wrong_item": "missing_items",
+    "item_unavailable": "availability",
+    "product_or_medicine_query": "availability",
+    "prescription": "prescription",
+    "payment": "payment_app",
+    "app_or_technical": "payment_app",
+    "discount_or_referral": "payment_app",
+    # "other" is deliberately absent — it is not evidence. It falls through to
+    # the root-cause read below.
 }
 
-# Last resort before Unclassified. A tag whose suffix is "Others" still names a
-# family, and that family is real information.
-FAMILY_MAP: list[tuple[str, str]] = [
-    ("Prescription", "prescription"),
-    ("Refund Related", "money"),
-    ("Payment Related", "money"),
-    ("Discount & Referral", "money"),
-    ("App & Technical", "technical"),
-    ("Medicine Related", "item"),
-    ("Delivery Related", "delay"),
-]
-
-
-# Phrases in the LLM's root cause that name a real topic even when it classified
-# the issue as "other". Checked before falling through to "no issue raised", so a
-# genuine serviceability question is not filed as a non-issue.
-ROOT_CAUSE_HINTS: list[tuple[tuple[str, ...], str]] = [
-    (("serviceab", "operates in", "deliver to", "delivers to", "non-service"), "serviceability"),
-    (("product image", "medicine", "product", "dosage", "expiry"), "item"),
-    (("refund", "payment", "coupon", "discount", "invoice"), "money"),
-    (("prescription", " rx "), "prescription"),
-    (("delay", "eta", "late"), "delay"),
-]
-
-# Root causes that describe contact WITHOUT a support issue: a stray reply to a
-# closed chat, a greeting, a thank-you that reopened a thread. These are the bulk
-# of what was previously "Unclassified", and they are a real operational category
-# -- roughly a tenth of tickets are threads nobody actually raised an issue in.
+# Root causes describing contact with no support issue in it: a stray reply to a
+# closed chat, a greeting, a thank-you that reopened the thread.
 NO_ISSUE_HINTS = (
     "no actual issue", "never described", "without stating", "no discernible issue",
     "stray reply", "closing script", "closing message", "thank-you", "thank you",
@@ -160,66 +92,73 @@ NO_ISSUE_HINTS = (
     "no accompanying message", "did not engage",
 )
 
+# Topical phrases, checked only when nothing better is available.
+ROOT_CAUSE_HINTS: list[tuple[tuple[str, ...], str]] = [
+    (("serviceab", "operates in", "deliver to", "delivers to", "non-service"), "availability"),
+    (("prescription", " rx "), "prescription"),
+    (("refund", "payment", "coupon", "discount", "invoice"), "payment_app"),
+    (("cancelled by", "we cancelled", "order was cancelled"), "cancelled_by_us"),
+    (("damaged", "wrong item", "expired"), "wrong_damaged"),
+    (("missing", "not handed", "short quantity"), "missing_items"),
+    (("delay", "eta", "late"), "late_delivery"),
+]
 
-def classify(issue_type: str | None, llm_issue: str | None,
+
+def classify(issue_category: str | None,
+             llm_issue: str | None = None,
              llm_root_cause: str | None = None) -> tuple[str, str]:
-    """Return (bucket_key, which evidence decided it).
+    """Return (category_key, which evidence decided it).
 
-    Deterministic and total: always returns a bucket in BUCKET_KEYS.
+    Deterministic and total: always returns a key in CATEGORY_KEYS.
+
+    NOTE the first argument is the model's own category, NOT the agent tag. The
+    tag is not consulted at all.
     """
-    tag = (issue_type or "").strip()
-    llm = (llm_issue or "").strip().lower()
+    cat = (issue_category or "").strip().lower()
+    if cat in CATEGORY_KEYS:
+        return cat, "transcript"
 
-    mapped = TAG_MAP.get(tag)
-    if mapped and mapped != VAGUE:
-        return mapped, "agent_tag"
-
-    if llm in LLM_MAP:
-        return LLM_MAP[llm], "llm" if mapped == VAGUE else "llm_unmapped_tag"
-
-    for prefix, bucket in FAMILY_MAP:
-        if tag.startswith(prefix):
-            return bucket, "tag_family"
+    legacy = (llm_issue or "").strip().lower()
+    if legacy in LEGACY_MAP:
+        return LEGACY_MAP[legacy], "legacy"
 
     rc = (llm_root_cause or "").strip().lower()
     if rc:
         if any(h in rc for h in NO_ISSUE_HINTS):
-            return "no_issue", "root_cause_no_issue"
-        for needles, bucket in ROOT_CAUSE_HINTS:
+            return "courtesy", "root_cause_no_issue"
+        for needles, key in ROOT_CAUSE_HINTS:
             if any(n in rc for n in needles):
-                return bucket, "root_cause"
-        # The model read the transcript and found no category. With no tag and no
-        # topical phrase either, "no issue raised" is the honest label -- not a
-        # shrug.
-        return "no_issue", "root_cause_residual"
+                return key, "root_cause"
+        return "courtesy", "root_cause_residual"
 
     return "unclassified", "none"
 
 
 def audit(rows: list[dict]) -> dict:
-    """Distribution plus the data-quality residual, for a given set of rows.
+    """Distribution plus the data-quality residual for a set of rows.
 
-    `rows` need only carry issue_type and llm_issue.
+    Rows need only carry llm_issue_category, llm_issue and llm_root_cause.
     """
-    counts = {b["key"]: 0 for b in BUCKETS}
+    counts = {c["key"]: 0 for c in CATEGORIES}
     by_evidence: dict[str, int] = {}
-    unmapped_tags: dict[str, int] = {}
     for r in rows:
-        key, ev = classify(r.get("issue_type"), r.get("llm_issue"),
-                            r.get("llm_root_cause"))
+        key, ev = classify(r.get("llm_issue_category"), r.get("llm_issue"),
+                           r.get("llm_root_cause"))
         counts[key] += 1
         by_evidence[ev] = by_evidence.get(ev, 0) + 1
-        tag = (r.get("issue_type") or "").strip()
-        if tag and tag not in TAG_MAP:
-            unmapped_tags[tag] = unmapped_tags.get(tag, 0) + 1
     total = sum(counts.values()) or 1
     return {
         "total": sum(counts.values()),
         "counts": counts,
         "share": {k: round(100.0 * v / total, 1) for k, v in counts.items()},
         "by_evidence": by_evidence,
-        # A tag we have never mapped. Should be empty; if not, add it to TAG_MAP
-        # rather than letting the cascade guess.
-        "unmapped_tags": unmapped_tags,
-        "buckets": BUCKETS,
+        # How much of the window is freshly classified from the transcript
+        # versus bridged from the old enum. Should trend to 100% transcript.
+        "transcript_pct": round(100.0 * by_evidence.get("transcript", 0) / total, 1),
+        "buckets": CATEGORIES,
+        "charted": CHARTED,
+        "folded": FOLDED,
+        # Kept so the existing UI's audit line does not break; the tag is no
+        # longer used for classification, so there is nothing to be unmapped.
+        "unmapped_tags": {},
     }

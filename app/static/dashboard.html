@@ -176,6 +176,137 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
 .ok b{color:var(--good)}
 .aname{font-weight:600}
 .foot{padding:9px 14px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+/* ===== Issue breakdown (page 2) ==========================================
+   Self-contained and pinned to light: this page reads as a printed record, so
+   it keeps its own surface rather than following the app's dark mode. Every
+   token and selector here is scoped under .isec so nothing leaks into the
+   other tabs.
+   Numerals are monospaced throughout so digits align down a column. The eight
+   series hues are the validated categorical palette; the tail folds into one
+   neutral band because eight is the safe categorical limit.
+   ========================================================================= */
+.isec{
+  color-scheme:light;
+  --i-paper:#f6f6f2; --i-card:#ffffff; --i-card2:#f0f1ec;
+  --i-ink:#14181a; --i-ink2:#43494c; --i-ink3:#62696c;   /* ink3 = 5.4:1 on card */
+  --i-rule:#dcded9; --i-rule2:#b4b9b2;
+  --i-mono:"SF Mono",SFMono-Regular,ui-monospace,Menlo,Consolas,monospace;
+  --i-disp:Optima,"Gill Sans","Gill Sans MT",Candara,system-ui,sans-serif;
+  background:var(--i-paper);color:var(--i-ink);
+  margin:-16px -20px -24px;padding:26px 20px 40px;font-size:15px;line-height:1.5;
+}
+.isec .irec{font-family:var(--i-mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--i-ink3);display:flex;flex-wrap:wrap;gap:6px 18px;
+  margin-bottom:10px}
+.isec .irec b{color:var(--i-ink2);font-weight:600}
+.isec .ititle{font-family:var(--i-disp);font-size:clamp(24px,3vw,34px);font-weight:600;
+  line-height:1.14;margin:0 0 10px;max-width:22ch;color:var(--i-ink);letter-spacing:.005em}
+.isec .istand{font-size:15px;color:var(--i-ink2);max-width:74ch;margin:0 0 22px}
+.isec .istand strong{color:var(--i-ink);font-weight:600}
+.isec .istand code{font-family:var(--i-mono);font-size:13px;background:var(--i-card2);
+  padding:1px 6px;border-radius:4px;color:var(--i-ink2)}
+
+.isec .ireadout{display:grid;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));
+  gap:16px;margin-bottom:18px}
+.isec .icell{background:var(--i-card);border:1px solid var(--i-rule);border-radius:12px;
+  padding:15px 17px 14px;border-left:3px solid var(--i-rule2)}
+.isec .icell.lead{border-left-color:#2a78d6}
+.isec .icell .k{font-family:var(--i-mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--i-ink3);font-weight:600;margin-bottom:7px}
+.isec .icell .v{font-family:var(--i-mono);font-size:31px;font-weight:600;line-height:1;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--i-ink)}
+.isec .icell .v.txt{font-family:var(--i-disp);font-size:20px;line-height:1.2;letter-spacing:0}
+.isec .icell .u{font-size:13px;color:var(--i-ink2);margin-top:6px}
+
+.isec .ipanel{background:var(--i-card);border:1px solid var(--i-rule);border-radius:12px;
+  padding:20px 22px;margin-bottom:16px}
+.isec .ihead{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;
+  border-bottom:1px solid var(--i-rule);padding-bottom:11px;margin-bottom:16px}
+.isec .ifield{font-family:var(--i-mono);font-size:11.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--i-ink3);font-weight:600}
+.isec .inote{font-size:13.5px;color:var(--i-ink2);margin-left:auto}
+
+.isec .ictrl{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:16px}
+.isec .iswitch{display:inline-flex;border:1px solid var(--i-rule2);border-radius:8px;overflow:hidden}
+.isec .iswitch button{background:var(--i-card);border:0;border-right:1px solid var(--i-rule2);
+  padding:8px 15px;font-family:var(--i-mono);font-size:12.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--i-ink2);cursor:pointer;min-height:36px}
+.isec .iswitch button:last-child{border-right:0}
+.isec .iswitch button:hover{background:var(--i-card2);color:var(--i-ink)}
+.isec .iswitch button[aria-pressed="true"]{background:var(--i-ink);color:var(--i-card);font-weight:600}
+.isec .ighost{background:var(--i-card);color:var(--i-ink2);border:1px solid var(--i-rule2);
+  border-radius:8px;padding:8px 13px;font-family:var(--i-mono);font-size:12.5px;
+  letter-spacing:.08em;text-transform:uppercase;cursor:pointer;min-height:36px}
+.isec .ighost:hover{border-color:#2a78d6;color:#2a78d6}
+.isec .ighost[hidden]{display:none}
+.isec .ihint{font-size:13.5px;color:var(--i-ink2);margin-left:auto;max-width:46ch}
+
+.isec .iplot{position:relative}
+.isec .iplot svg{display:block;width:100%;height:auto;overflow:visible}
+.isec .igl{stroke:var(--i-rule);stroke-width:1;shape-rendering:crispEdges}
+.isec .igl2{stroke:var(--i-rule2);stroke-width:1;shape-rendering:crispEdges}
+.isec .itick{fill:var(--i-ink3);font-family:var(--i-mono);font-size:14px;
+  font-variant-numeric:tabular-nums}
+.isec .icap{fill:var(--i-ink2);font-family:var(--i-mono);font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums}
+.isec .iname{fill:var(--i-ink3);font-family:var(--i-mono);font-size:12px;letter-spacing:.14em;
+  text-transform:uppercase;font-weight:600}
+.isec .imonth{fill:var(--i-ink2);font-family:var(--i-mono);font-size:13px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase}
+.isec .iseg{transition:opacity .12s}
+.isec .iseg.mute{opacity:.16}
+.isec .ihit{fill:transparent;cursor:pointer}
+
+.isec .ilegend{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px;
+  border-top:1px solid var(--i-rule);padding-top:15px}
+.isec .ichip{display:inline-flex;align-items:center;gap:9px;background:var(--i-card);
+  border:1px solid var(--i-rule);border-radius:8px;padding:7px 12px 7px 10px;cursor:pointer;
+  font-size:13.5px;color:var(--i-ink);transition:.12s}
+.isec .ichip:hover{border-color:var(--i-rule2);background:var(--i-card2)}
+.isec .ichip[aria-pressed="true"]{border-color:var(--i-ink);background:var(--i-card2);font-weight:600}
+.isec .ichip.off{opacity:.42}
+.isec .ikey{width:12px;height:12px;border-radius:3px;flex:none;display:inline-block}
+.isec .ichip .qty{font-family:var(--i-mono);font-size:13px;color:var(--i-ink2);
+  font-variant-numeric:tabular-nums}
+
+.isec .itip{position:absolute;pointer-events:none;z-index:30;background:var(--i-card);
+  border:1px solid var(--i-rule2);border-radius:10px;box-shadow:0 6px 28px rgba(0,0,0,.16);
+  padding:12px 14px;min-width:244px;opacity:0;transition:opacity .1s}
+.isec .itip.on{opacity:1}
+.isec .itip .h{display:flex;justify-content:space-between;gap:16px;align-items:baseline;
+  border-bottom:1px solid var(--i-rule);padding-bottom:8px;margin-bottom:8px}
+.isec .itip .h .d{font-family:var(--i-mono);font-size:13px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--i-ink)}
+.isec .itip .h .t{font-family:var(--i-mono);font-size:15px;font-weight:600;color:var(--i-ink);
+  font-variant-numeric:tabular-nums}
+.isec .itip .r{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:2.5px 0;font-size:13.5px;color:var(--i-ink2)}
+.isec .itip .r .l{display:flex;align-items:center;gap:8px;min-width:0}
+.isec .itip .r .n{font-family:var(--i-mono);font-size:13px;color:var(--i-ink);font-weight:600;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.isec .itscroll{overflow-x:auto}
+.isec .irec-t{border-collapse:collapse;width:100%;min-width:640px}
+.isec .irec-t th{font-family:var(--i-mono);font-size:11.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--i-ink3);font-weight:600;text-align:left;
+  padding:0 12px 10px;border-bottom:1px solid var(--i-rule2)}
+.isec .irec-t td{padding:11px 12px;border-bottom:1px solid var(--i-rule);font-size:14px;
+  color:var(--i-ink)}
+.isec .irec-t th.n,.isec .irec-t td.n{text-align:right;font-family:var(--i-mono);
+  font-variant-numeric:tabular-nums}
+.isec .irec-t tbody tr{cursor:pointer}
+.isec .irec-t tbody tr:hover{background:var(--i-card2)}
+.isec .irec-t tbody tr.on{background:var(--i-card2);box-shadow:inset 3px 0 0 var(--i-ink)}
+.isec .irec-t .nm{display:flex;align-items:center;gap:10px}
+.isec .irec-t tr.sub td:first-child{padding-left:30px}
+.isec .irec-t tr.sub .nm{color:var(--i-ink2);font-size:13.5px}
+.isec .irec-t tr.div td{padding:16px 12px 7px;border-bottom:none;font-family:var(--i-mono);
+  font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--i-ink3);font-weight:600}
+.isec .iledger{font-size:13px;color:var(--i-ink2);margin-top:16px;padding-top:14px;
+  border-top:1px solid var(--i-rule)}
+.isec .iledger b{font-family:var(--i-mono);color:#008300;font-variant-numeric:tabular-nums}
+.isec .iledger b.bad{color:#e34948}
+.isec .iempty{padding:40px;text-align:center;color:var(--i-ink3)}
 </style>
 </head>
 <body>
@@ -205,29 +336,33 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
     </select></div>
   <div class="f" id="fromwrap" style="display:none"><label>From</label><input type="date" id="from"></div>
   <div class="f" id="towrap" style="display:none"><label>To</label><input type="date" id="to"></div>
-  <div class="f"><label>Issue from</label>
+  <!-- Everything below is about ticket-list filtering and does not apply to the
+       transcript-based issue chart (page 2), which only reads the date range
+       above. Marked f-tix so it can be hidden there, the same way the whole
+       bar is hidden on Attendance/Orders. -->
+  <div class="f f-tix"><label>Issue from</label>
     <select id="issue_source"><option value="llm">AI analysis</option><option value="agent">Agent tag</option></select></div>
-  <div class="f"><label>Count</label>
+  <div class="f f-tix"><label>Count</label>
     <select id="count_mode">
       <option value="tickets">Tickets (all)</option>
       <option value="customers">Unique customers</option>
       <option value="orders">Unique orders</option>
     </select></div>
-  <div class="f"><label>Issue</label><select id="issue"><option value="">All</option></select></div>
-  <div class="f"><label>Store</label><select id="store"><option value="">All</option></select></div>
-  <div class="f"><label>Fulfilment</label><select id="fulfillment"><option value="">All</option></select></div>
-  <div class="f"><label>Agent</label><select id="agent"><option value="">All</option></select></div>
-  <div class="f"><label>Outcome</label><select id="resolution"><option value="">All</option></select></div>
-  <div class="f"><label>Sentiment</label><select id="sentiment">
+  <div class="f f-tix"><label>Issue</label><select id="issue"><option value="">All</option></select></div>
+  <div class="f f-tix"><label>Store</label><select id="store"><option value="">All</option></select></div>
+  <div class="f f-tix"><label>Fulfilment</label><select id="fulfillment"><option value="">All</option></select></div>
+  <div class="f f-tix"><label>Agent</label><select id="agent"><option value="">All</option></select></div>
+  <div class="f f-tix"><label>Outcome</label><select id="resolution"><option value="">All</option></select></div>
+  <div class="f f-tix"><label>Sentiment</label><select id="sentiment">
       <option value="">All</option><option value="positive">Positive</option>
       <option value="neutral">Neutral</option><option value="negative">Negative</option></select></div>
-  <div class="f"><label>Cross-store</label><select id="cross_store">
+  <div class="f f-tix"><label>Cross-store</label><select id="cross_store">
       <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
-  <div class="f"><label>Reopened</label><select id="reopened">
+  <div class="f f-tix"><label>Reopened</label><select id="reopened">
       <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
-  <div class="f"><label>SLA breach</label><select id="sla_breached">
+  <div class="f f-tix"><label>SLA breach</label><select id="sla_breached">
       <option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
-  <div class="f"><label>Search</label><input type="text" id="search" placeholder="CART id, summary…"></div>
+  <div class="f f-tix"><label>Search</label><input type="text" id="search" placeholder="CART id, summary…"></div>
 </div>
 
 <main>
@@ -266,9 +401,61 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
   </section>
 
   <!-- Page 2 -->
+  <!-- Issue breakdown. Deliberately nothing else on this page: every ticket is
+       categorised from its chat transcript, and this is the whole of that view.
+       Driven by /api/issues, so it is as live as the webhook. -->
   <section class="page" id="p2">
-    <div class="cards" id="p2cards"></div>
-    <div id="p2body"></div>
+    <div class="isec">
+      <div class="irec">
+        <span>Plazza support</span><span>Record <b>ISS</b></span>
+        <span>Window <b id="i_win">—</b></span><span>IST</span>
+        <span>Updated <b id="i_when">—</b></span>
+      </div>
+      <h2 class="ititle">What customers actually contacted us about</h2>
+      <p class="istand">Every ticket is classified from its <strong>chat transcript</strong>,
+        not from the agent's <code>issue_type</code> tag. One category per ticket, so a
+        day's segments add up to that day's total.</p>
+
+      <div class="ireadout" id="i_readout"></div>
+
+      <div class="ipanel">
+        <div class="ihead">
+          <span class="ifield">Tickets per day by issue</span>
+          <span class="inote">Each column is one day. Segment height is the number of tickets.</span>
+        </div>
+        <div class="ictrl">
+          <div class="iswitch" id="i_mode">
+            <button data-v="count" aria-pressed="true">Count</button>
+            <button data-v="share" aria-pressed="false">Share %</button>
+          </div>
+          <button class="ighost" id="i_clear" hidden>Clear filter</button>
+          <span class="ihint">Click a key or a table row to isolate one issue. Hover a column for that day's breakdown.</span>
+        </div>
+        <div class="iplot">
+          <svg id="i_svg" viewBox="0 0 1240 520" role="img"
+               aria-label="Stacked column chart: tickets per day by issue category"></svg>
+          <div class="itip" id="i_tip"></div>
+        </div>
+        <div class="ilegend" id="i_legend"></div>
+      </div>
+
+      <div class="ipanel">
+        <div class="ihead">
+          <span class="ifield">All categories</span>
+          <span class="inote">Indented rows sit inside the grey “Other” band — counted, just not given their own hue.</span>
+        </div>
+        <div class="itscroll">
+          <table class="irec-t">
+            <thead><tr>
+              <th>Issue</th><th class="n">Tickets</th><th class="n">Share</th>
+              <th class="n">Per day</th><th style="width:184px">Shape over the window</th>
+            </tr></thead>
+            <tbody id="i_tbody"></tbody>
+          </table>
+        </div>
+        <div class="iledger" id="i_ledger"></div>
+      </div>
+    </div>
   </section>
 
   <!-- Page 3 -->
@@ -608,42 +795,203 @@ async function loadTickets(){
   $('#next').disabled = offset + d.limit >= d.total;
 }
 
-/* ---------- page 2 ---------- */
-function barBlock(title, rows, unit){
-  if (!rows || !rows.length) return '';
-  const max = Math.max(...rows.map(r => r.count)) || 1;
-  return `<div class="panel"><h2>${esc(title)}</h2><div class="bars">` + rows.map(r => `
-    <div class="bar">
-      <div class="lb" title="${esc(r.label)}">${esc(nice(r.label))}</div>
-      <div class="tk" style="width:${Math.max(2, r.count/max*100)}%"></div>
-      <div class="vl">${r.count}${unit?' '+unit:''} · ${dur(r.median_secs)}</div>
-    </div>`).join('') + '</div></div>';
-}
-async function loadStats(){
-  const s = await get('/api/stats', {count_mode:$('#count_mode').value});
-  const m = s.summary;
-  const modeLabel = {tickets:'tickets', customers:'customers', orders:'orders'}[s.count_mode];
-  $('#p2cards').innerHTML = [
-    ['Resolved', m.resolved ?? 0, 'total resolve clicks'],
-    ['Tickets', m.tickets ?? 0, 'incl. repeats'],
-    ['Unique customers', m.customers ?? 0, 'deduped'],
-    ['Unique orders', m.orders ?? 0, 'deduped'],
-    ['Agents', m.agents ?? 0, 'resolving'],
-    ['Median resolve', dur(m.median_secs), ''],
-    ['Reopened', m.reopened ?? 0, ''],
-    ['Reply SLA breached', m.sla_response_breached ?? 0, 'any reply in thread'],
-  ].map(([k,v,sub]) => `<div class="card"><div class="k">${k}</div><div class="v">${esc(v)}</div>
-      <div class="sub">${sub}</div></div>`).join('');
+/* ---------- page 2: issue breakdown ---------------------------------------
+ * Categories come from the chat transcript (see app/issues.py); the agent's tag
+ * is not consulted. Eight hues is the safe categorical limit, so the eight
+ * largest categories get their own colour and the tail folds into one neutral
+ * band. Hue is bound to the category KEY, never to its rank, so isolating a
+ * series never repaints the others.
+ */
+const IMON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const IOTHER = '__other';
+let ISSUE = null, iMode = 'count', iSel = null;
 
-  $('#p2body').innerHTML =
-      barBlock(`Issue — AI analysis (counted by ${modeLabel})`, s.by_issue, '') +
-      barBlock('Issue — agent tag, for comparison', s.by_issue_agent_tagged, '') +
-      barBlock('Store', s.by_store, '') +
-      barBlock('Fulfilment mode', s.by_fulfillment, '') +
-      barBlock('Outcome', s.by_resolution, '') +
-      barBlock('Customer sentiment', s.by_sentiment, '') +
-      barBlock('Resolving agent', s.by_agent, '')
-      || '<div class="panel"><div class="empty">Nothing in this range.</div></div>';
+// The shared range control drives this page too; /api/issues takes a day count.
+function iDays(){
+  const r = $('#range').value;
+  if (r === 'today') return 1;
+  if (r === 'yesterday') return 2;
+  if (r === 'week') return 7;
+  if (r === 'month') return 30;
+  const a = $('#from').value, b = $('#to').value;      // custom
+  if (!a || !b) return 30;
+  return Math.max(1, Math.round((new Date(b) - new Date(a)) / 86400000) + 1);
+}
+
+function iModel(){
+  const bk = ISSUE.buckets || [];
+  const charted = ISSUE.charted || bk.slice(0, 8).map(b => b.key);
+  const folded  = ISSUE.folded  || bk.slice(8).map(b => b.key);
+  const bands = charted.map(k => bk.find(b => b.key === k)).filter(Boolean)
+    .map(b => ({key: b.key, label: b.label, color: b.color}));
+  if (folded.length) bands.push({key: IOTHER, color: '#8b9296',
+    label: `Other (${folded.length} smaller)`});
+  const bandOf = k => folded.includes(k) ? IOTHER : k;
+  const days = Object.keys(ISSUE.per_day || {}).sort();
+  const M = {};
+  days.forEach(d => {
+    M[d] = {}; bands.forEach(b => M[d][b.key] = 0);
+    Object.entries(ISSUE.per_day[d] || {}).forEach(([k, n]) => { M[d][bandOf(k)] += n; });
+  });
+  return {bk, bands, folded, days, M, bandOf,
+          total: d => bands.reduce((a, b) => a + M[d][b.key], 0)};
+}
+
+function renderIssuePage(){
+  if (!ISSUE) return;
+  const m = iModel();
+  if (!m.days.length){
+    $('#i_svg').innerHTML = ''; $('#i_readout').innerHTML = '';
+    $('#i_tbody').innerHTML = '<tr><td colspan="5" class="iempty">Nothing in this range.</td></tr>';
+    $('#i_ledger').textContent = ''; $('#i_legend').innerHTML = ''; return;
+  }
+  iReadout(m); iChart(m); iLegend(m); iTable(m);
+}
+
+function iReadout(m){
+  const totals = m.days.map(m.total);
+  const peak = m.days[totals.indexOf(Math.max(...totals))];
+  const bk = m.bk.slice().sort((a, b) => (ISSUE.counts[b.key]||0) - (ISSUE.counts[a.key]||0));
+  const top = bk[0] || {label: '—', key: ''};
+  const n = ISSUE.counts[top.key] || 0;
+  const dl = d => (+d.slice(8,10)) + ' ' + IMON[+d.slice(5,7)-1];
+  $('#i_win').textContent = dl(m.days[0]) + ' – ' + dl(m.days[m.days.length-1]);
+  $('#i_readout').innerHTML = `
+    <div class="icell"><div class="k">Tickets</div><div class="v">${ISSUE.total}</div>
+      <div class="u">over ${m.days.length} day${m.days.length===1?'':'s'}</div></div>
+    <div class="icell"><div class="k">Typical day</div>
+      <div class="v">${Math.round(ISSUE.total/m.days.length)}</div>
+      <div class="u">mean across the window</div></div>
+    <div class="icell"><div class="k">Busiest day</div><div class="v">${Math.max(...totals)}</div>
+      <div class="u">${dl(peak)}</div></div>
+    <div class="icell lead"><div class="k">Leading issue</div>
+      <div class="v txt">${esc(top.label)}</div>
+      <div class="u">${n} tickets · ${ISSUE.share[top.key] ?? 0}% of all contact</div></div>`;
+}
+
+function iChart(m){
+  const W=1240,H=520,ML=60,MR=16,MT=30,MB=56;
+  const PW=W-ML-MR, PH=H-MT-MB, GAP=2;
+  const band = PW/m.days.length, bw = Math.min(26, Math.max(4, band-9));
+  const share = iMode === 'share';
+  const peak = Math.max(1, ...m.days.map(m.total));
+  const st = peak>150?50:peak>60?20:peak>25?10:5;
+  const yMax = share ? 100 : Math.max(st, Math.ceil(peak/st)*st);
+  const y = v => MT + PH - (v/yMax)*PH;
+  let s = '';
+  for (let i=0;i<=5;i++){
+    const v = yMax*i/5, yy = y(v);
+    s += `<line class="igl" x1="${ML}" x2="${W-MR}" y1="${yy}" y2="${yy}"/>`;
+    s += `<text class="itick" x="${ML-11}" y="${yy+5}" text-anchor="end">${share?v+'%':Math.round(v)}</text>`;
+  }
+  s += `<text class="iname" transform="translate(15,${MT+PH/2}) rotate(-90)" text-anchor="middle">${share?'Share of day':'Tickets'}</text>`;
+
+  const every = m.days.length > 40 ? 5 : m.days.length > 20 ? 2 : 1;
+  m.days.forEach((d,i) => {
+    const x = ML + i*band + (band-bw)/2, t = m.total(d) || 1;
+    const sc = share ? 100/t : 1;
+    let acc = 0;
+    const top = [...m.bands].reverse().find(b => m.M[d][b.key] > 0);
+    m.bands.forEach(b => {
+      const raw = m.M[d][b.key]; if (!raw) return;
+      const v = raw*sc, y0 = y(acc+v), y1 = y(acc); acc += v;
+      const hh = Math.max(y1-y0-GAP, .9);
+      const mute = iSel && m.bandOf(iSel) !== b.key ? ' mute' : '';
+      const r = Math.min(4, hh/2, bw/2);
+      s += (top && b.key === top.key)
+        ? `<path class="iseg${mute}" fill="${b.color}" d="M${x},${y0+hh} L${x},${y0+r} Q${x},${y0} ${x+r},${y0} L${x+bw-r},${y0} Q${x+bw},${y0} ${x+bw},${y0+r} L${x+bw},${y0+hh} Z"/>`
+        : `<rect class="iseg${mute}" x="${x}" y="${y0}" width="${bw}" height="${hh}" fill="${b.color}"/>`;
+    });
+    if (!share && band > 20)
+      s += `<text class="icap" x="${x+bw/2}" y="${y(m.total(d))-9}" text-anchor="middle">${m.total(d)}</text>`;
+    if (i % every === 0 || i === m.days.length-1)
+      s += `<text class="itick" x="${x+bw/2}" y="${MT+PH+22}" text-anchor="middle">${+d.slice(8,10)}</text>`;
+    if (i > 0 && d.slice(5,7) !== m.days[i-1].slice(5,7)){
+      const mx = ML + i*band;
+      s += `<line class="igl2" x1="${mx}" x2="${mx}" y1="${MT-8}" y2="${MT+PH+30}"/>`;
+      s += `<text class="imonth" x="${mx+7}" y="${MT-13}">${IMON[+d.slice(5,7)-1]}</text>`;
+    }
+    s += `<rect class="ihit" data-d="${d}" x="${ML+i*band}" y="${MT}" width="${band}" height="${PH}"/>`;
+  });
+  s += `<text class="imonth" x="${ML}" y="${MT-13}">${IMON[+m.days[0].slice(5,7)-1]}</text>`;
+  s += `<line class="igl2" x1="${ML}" x2="${W-MR}" y1="${MT+PH}" y2="${MT+PH}"/>`;
+  $('#i_svg').innerHTML = s;
+
+  const svg = $('#i_svg'), tip = $('#i_tip');
+  svg.onmousemove = e => {
+    const h = e.target.closest('.ihit');
+    if (!h){ tip.classList.remove('on'); return; }
+    const d = h.dataset.d, t = m.total(d) || 1;
+    tip.innerHTML = `<div class="h"><span class="d">${(+d.slice(8,10))} ${IMON[+d.slice(5,7)-1]}</span>`
+      + `<span class="t">${m.total(d)}</span></div>`
+      + m.bands.filter(b => m.M[d][b.key] > 0).sort((a,b) => m.M[d][b.key]-m.M[d][a.key])
+        .map(b => `<div class="r"><span class="l"><span class="ikey" style="background:${b.color}"></span>${esc(b.label)}</span>`
+          + `<span class="n">${m.M[d][b.key]} · ${Math.round(100*m.M[d][b.key]/t)}%</span></div>`).join('');
+    tip.classList.add('on');
+    const box = svg.getBoundingClientRect();
+    let x = e.clientX - box.left + 16;
+    if (x + tip.offsetWidth > box.width) x = e.clientX - box.left - tip.offsetWidth - 16;
+    tip.style.left = Math.max(0, x) + 'px';
+    tip.style.top = Math.max(0, Math.min(e.clientY-box.top+14, box.height-tip.offsetHeight)) + 'px';
+  };
+  svg.onmouseleave = () => tip.classList.remove('on');
+}
+
+function iLegend(m){
+  $('#i_legend').innerHTML = m.bands.map(b => {
+    const on = iSel && m.bandOf(iSel) === b.key, off = iSel && !on;
+    const n = m.days.reduce((a,d) => a + m.M[d][b.key], 0);
+    return `<button class="ichip${off?' off':''}" data-b="${b.key}" aria-pressed="${!!on}">
+      <span class="ikey" style="background:${b.color}"></span>${esc(b.label)}
+      <span class="qty">${n}</span></button>`;
+  }).join('');
+  $('#i_clear').hidden = !iSel;
+}
+
+function iTable(m){
+  const nd = m.days.length || 1;
+  const colourOf = k => (m.bands.find(b => b.key === m.bandOf(k)) || {}).color || '#8b9296';
+  const row = (b, sub) => {
+    const n = ISSUE.counts[b.key] || 0;
+    return `<tr class="${sub?'sub ':''}${iSel===b.key?'on':''}" data-c="${b.key}">
+      <td><span class="nm"><span class="ikey" style="background:${colourOf(b.key)}"></span>${esc(b.label)}</span></td>
+      <td class="n">${n}</td><td class="n">${ISSUE.share[b.key] ?? 0}%</td>
+      <td class="n">${(n/nd).toFixed(1)}</td>
+      <td>${iShape(m, b.key, colourOf(b.key))}</td></tr>`;
+  };
+  const charted = m.bk.filter(b => !m.folded.includes(b.key));
+  const folded  = m.bk.filter(b =>  m.folded.includes(b.key));
+  const otherN  = folded.reduce((a,b) => a + (ISSUE.counts[b.key]||0), 0);
+  $('#i_tbody').innerHTML = charted.map(b => row(b,false)).join('')
+    + (folded.length ? `<tr class="div"><td colspan="5">Inside “Other” — ${otherN} tickets</td></tr>`
+        + folded.map(b => row(b,true)).join('') : '');
+
+  const sum = m.bk.reduce((a,b) => a + (ISSUE.counts[b.key]||0), 0);
+  const dsum = m.days.reduce((a,d) => a + m.total(d), 0);
+  const ok = sum === ISSUE.total, ok2 = dsum === ISSUE.total;
+  const tp = ISSUE.transcript_pct;
+  $('#i_ledger').innerHTML =
+    `Mutually exclusive and exhaustive — <b class="${ok?'':'bad'}">${sum}</b> categorised against `
+    + `<b class="${ok?'':'bad'}">${ISSUE.total}</b> tickets${ok?' ✓':' ✗ mismatch'}; the daily `
+    + `columns also sum to <b class="${ok2?'':'bad'}">${dsum}</b>${ok2?' ✓':' ✗'}. `
+    + (tp === undefined ? '' : `<b>${tp}%</b> classified natively from the transcript; the rest `
+       + `bridged from the older label set, a share that falls as new tickets arrive. `)
+    + `The agent's tag is not used.`;
+}
+
+function iShape(m, key, colour){
+  const v = m.days.map(d => (ISSUE.per_day[d] || {})[key] || 0);
+  const mx = Math.max(...v, 1), w = 172, h = 26, bw = w/v.length;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">`
+    + v.map((n,i) => { const bh = n ? Math.max(1.6, (n/mx)*(h-3)) : 0;
+        return bh ? `<rect x="${(i*bw).toFixed(2)}" y="${(h-bh).toFixed(2)}" width="${Math.max(bw-1.2,1).toFixed(2)}" height="${bh.toFixed(2)}" fill="${colour}"/>` : ''; }).join('')
+    + `</svg>`;
+}
+
+async function loadStats(){
+  ISSUE = await get('/api/issues', {days: iDays()});
+  $('#i_when').textContent = new Date().toLocaleTimeString();
+  renderIssuePage();
 }
 
 /* ---------- page 3 ---------- */
@@ -1021,6 +1369,28 @@ function renderFreshness(){
 }
 renderFreshness();
 
+$('#i_mode').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  iMode = b.dataset.v;
+  [...$('#i_mode').children].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  renderIssuePage();
+});
+$('#i_clear').onclick = () => { iSel = null; renderIssuePage(); };
+$('#i_legend').addEventListener('click', e => {
+  const b = e.target.closest('.ichip'); if (!b) return;
+  const k = b.dataset.b;
+  const m = iModel();
+  // "__other" is a band, not a real category key -- isolate it via any one of
+  // its folded members, since bandOf() maps all of them back to the band.
+  iSel = (iSel && m.bandOf(iSel) === k) ? null : (k === IOTHER ? (m.folded[0] || null) : k);
+  renderIssuePage();
+});
+$('#i_tbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr'); if (!tr || !tr.dataset.c) return;
+  iSel = iSel === tr.dataset.c ? null : tr.dataset.c;
+  renderIssuePage();
+});
+
 $('#o_days').addEventListener('change', () => loadOrders().catch(() => {}));
 $('#o_live').addEventListener('change', scheduleOrders);
 
@@ -1196,6 +1566,10 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   // person turned up, so leaving it visible on the attendance tab would imply
   // the grid responds to it.
   $('#filters').style.display = (page >= 4) ? 'none' : '';
+  // Page 2 (issue breakdown) keeps only the date range -- the chart reads the
+  // transcript, not the ticket-list filters, and the record page is meant to
+  // stand alone with just its own controls underneath.
+  document.querySelectorAll('.f-tix').forEach(el => el.style.display = (page === 2) ? 'none' : '');
   refresh();
 });
 

@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -825,17 +825,19 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
 
 @app.get("/api/issues")
 def api_issues(days: int = Query(30, ge=1, le=365)):
-    """MECE issue breakdown. Every ticket lands in exactly one real bucket.
+    """MECE issue breakdown, read from the chat transcript.
 
-    Neither the agent tag nor the LLM label works alone, so issues.classify()
-    cascades tag -> LLM -> tag family -> LLM root cause. The residual is reported
-    as `unclassified` and is expected to be near zero; if it grows, a new agent
-    tag has appeared and belongs in issues.TAG_MAP.
+    The agent's `issue_type` tag is deliberately NOT used to classify: it is
+    noisy, and "General - Others" was its second largest value. Categories come
+    from `llm_issue_category`, which the model picks from the transcript at
+    enrichment time. Rows enriched before that column existed are bridged from
+    the older `llm_issue` enum and counted as `legacy` evidence, so
+    `transcript_pct` shows how much of the window is natively classified.
     """
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT issue_type, llm_issue, llm_root_cause,
+            SELECT llm_issue_category, llm_issue, llm_root_cause,
                    (resolved_at AT TIME ZONE %(tz)s)::date::text AS day,
                    llm_resolution
             FROM resolve_events
@@ -850,7 +852,8 @@ def api_issues(days: int = Query(30, ge=1, le=365)):
     per_day: dict[str, dict] = {}
     solved: dict[str, dict] = {}
     for r in rows:
-        key, _ = issues.classify(r.get("issue_type"), r.get("llm_issue"), r.get("llm_root_cause"))
+        key, _ = issues.classify(r.get("llm_issue_category"), r.get("llm_issue"),
+                                 r.get("llm_root_cause"))
         d = r["day"]
         per_day.setdefault(d, {})[key] = per_day.setdefault(d, {}).get(key, 0) + 1
         s = solved.setdefault(key, {"total": 0, "resolved": 0})
@@ -886,24 +889,60 @@ def api_tickets_flow(days: int = Query(14, ge=1, le=120)):
         # First FULL local day of resolve data: the partial first day would also
         # understate the rate.
         boundary = (cur_tz + timedelta(days=1)).isoformat()
+    # ...but "the day after capture started" assumes capture was complete from then
+    # on, and ours was not: it put the boundary at 28 Jul and the chart then showed
+    # a 1.5% solve rate for a day we simply hold few resolutions for. The configured
+    # floor is the day verified complete against Freshchat's own export, so take
+    # whichever is later.
+    if config.RESOLVE_COMPLETE_FROM:
+        boundary = max(boundary, config.RESOLVE_COMPLETE_FROM) if boundary \
+            else config.RESOLVE_COMPLETE_FROM
 
-    out = []
-    for r in flow:
+    def row(r: dict, measured: int) -> dict:
+        """`measured` is how many of the raised tickets fall inside the span where
+        resolve capture is complete. The solve rate is over those, never over the
+        whole bucket -- dividing by tickets we cannot see the resolutions for would
+        report the team as slower than they were."""
         raised = r["raised"] or 0
         solved = r["raised_and_solved"] or 0
-        complete = boundary is not None and r["bucket"] >= boundary
-        out.append({
+        return {
             "bucket": r["bucket"],
             "raised": raised,
-            "raised_and_solved": solved if complete else None,
+            "measured_raised": measured,
+            "raised_and_solved": solved if measured else None,
             "resolved_that_day": r["resolved_that_day"] or 0,
-            "solve_rate": (round(100.0 * solved / raised, 1) if raised else 0.0) if complete else None,
-            "has_resolve_data": complete,
+            "solve_rate": round(100.0 * solved / measured, 1) if measured else None,
+            "has_resolve_data": measured > 0,
+            "fully_measured": measured == raised,
+        }
+
+    # A day is entirely on one side of the boundary, so it is all-or-nothing.
+    out = [row(r, (r["raised"] or 0)
+                  if (boundary is not None and r["bucket"] >= boundary) else 0)
+           for r in flow]
+
+    # A week can straddle the boundary, so its measured count is counted per day in
+    # SQL rather than decided by the week's start date. days_in_bucket says how much
+    # of the week is inside the window, so a short first or last week reads as short
+    # rather than as a drop in volume.
+    today = datetime.now(ZoneInfo(config.TIMEZONE)).date()
+    window_start = today - timedelta(days=days - 1)
+    weeks = []
+    for r in db.ticket_flow_weekly(days, config.TIMEZONE, boundary):
+        w_start = date.fromisoformat(r["bucket"])
+        w_end = w_start + timedelta(days=6)
+        lo, hi = max(w_start, window_start), min(w_end, today)
+        weeks.append({
+            **row(r, r["measured_raised"] or 0),
+            "days_in_bucket": (hi - lo).days + 1 if hi >= lo else 0,
+            "partial": w_start < window_start or w_end > today,
         })
+
     return {
         "days": days,
         "timezone": config.TIMEZONE,
         "daily": out,
+        "weekly": weeks,
         "inflow_source": "Extract API Conversation-Created, ingested hourly",
         "resolved_source": "live webhook",
         "inflow_stats": {k: str(v) for k, v in stats.items()},

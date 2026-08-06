@@ -17,7 +17,7 @@ import logging
 
 from anthropic import AsyncAnthropic
 
-from . import config, freshchat
+from . import config, freshchat, issues
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,38 @@ Definitions:
 
 - `issue`: what the customer's problem actually was. Agents tag in a hurry and \
 default to generic categories; ignore how it might have been labelled.
+
+- `issue_category`: the same judgement, expressed in the dashboard's own \
+taxonomy. Pick exactly one, by the customer's PRIMARY reason for making \
+contact, not by how it was resolved:
+  * late_delivery - a placed, undelivered order is late, stuck, or shows no \
+progress: "where is my order", no rider assigned, stuck packing, out for \
+delivery but not arriving, wants a firm ETA. Use this whenever the trigger is \
+the wait itself, even if the underlying cause turns out to be stock or Rx.
+  * courtesy - no substantive issue: a thank-you, "ok", an emoji, a bare rating \
+digit, a reply to a closing script, or a chat abandoned before any concern was \
+stated.
+  * prescription - the Rx step itself: the doctor has not called, validation is \
+slow, the customer missed the call, upload failed, or they ask how approval works.
+  * cancel_request - the CUSTOMER asks to cancel before delivery, plus refund \
+timing questions that follow their own cancellation.
+  * missing_items - the order arrived but something is absent: an item shown as \
+delivered was never handed over, short quantity, a missing accessory. Includes \
+chasing a promised replacement for it.
+  * order_change - amend a placed order rather than cancel it: change address or \
+phone, add items, merge shipments, change the slot.
+  * payment_app - platform-side trouble: cannot log in or place an order, \
+errors, money debited with no order created, coupon or referral failures, COD \
+requests, invoice requests or corrections.
+  * return_refund - a post-delivery return, exchange or refund of goods that \
+arrived correctly and undamaged, or a follow-up on an agreed return or credit.
+  * cancelled_by_us - the customer asks why PLAZZA cancelled or rejected their \
+order and what happens to their money. They did not ask for it.
+  * wrong_damaged - what arrived is not what was ordered (wrong medicine, brand \
+or strength) or arrived damaged, leaking or expired.
+  * availability - a pre-order question: is this medicine stocked or permitted, \
+what substitutes exist, do you deliver to my pincode. No existing order is involved.
+  * unclassified - a real intent that fits none of the above. Use sparingly.
 
 - `outcome`: did the customer leave with their problem solved?
   * resolved - the problem was actually fixed or fully answered.
@@ -118,6 +150,10 @@ SCHEMA = {
                 "other",
             ],
         },
+        # The dashboard's taxonomy. Kept alongside `issue` rather than replacing
+        # it: `issue` still backs the existing filters and the historical rows,
+        # and the two are cross-checkable.
+        "issue_category": {"type": "string", "enum": list(issues.MODEL_CATEGORIES)},
         "outcome": {
             "type": "string",
             "enum": ["resolved", "partially_resolved", "deflected", "no_customer_response"],
@@ -144,6 +180,7 @@ SCHEMA = {
     },
     "required": [
         "issue",
+        "issue_category",
         "outcome",
         "answered_the_ask",
         "commitment",

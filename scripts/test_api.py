@@ -11,6 +11,8 @@ how much data happens to be in it, so it passes on an empty table too.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -119,11 +121,49 @@ def main() -> int:
         check("daily is a list", isinstance(f.get("daily"), list))
         check("declares both source freshnesses",
               bool(f.get("inflow_source")) and bool(f.get("resolved_source")))
+        check("weekly is a list", isinstance(f.get("weekly"), list))
+        for scope in ("daily", "weekly"):
+            for row in f[scope]:
+                check(f"{scope} {row['bucket']}: solved never exceeds raised",
+                      row["raised_and_solved"] is None
+                      or row["raised_and_solved"] <= row["raised"])
+                check(f"{scope} {row['bucket']}: rate is None exactly when solved is None",
+                      (row["solve_rate"] is None) == (row["raised_and_solved"] is None))
+
+        # The week charts sit directly under the day charts, so a reader compares
+        # them: if the two disagreed on how many tickets came in, one is wrong.
+        if f["daily"] and f["weekly"]:
+            check(f"weekly raised {sum(r['raised'] for r in f['weekly'])} equals"
+                  f" daily raised {sum(r['raised'] for r in f['daily'])}",
+                  sum(r["raised"] for r in f["weekly"])
+                  == sum(r["raised"] for r in f["daily"]))
+        for scope in ("daily", "weekly"):
+            for row in f[scope]:
+                check(f"{scope} {row['bucket']}: measured never exceeds raised",
+                      row["measured_raised"] <= row["raised"])
+                check(f"{scope} {row['bucket']}: solved never exceeds measured",
+                      row["raised_and_solved"] is None
+                      or row["raised_and_solved"] <= row["measured_raised"])
+                check(f"{scope} {row['bucket']}: rate is over measured, not raised",
+                      row["solve_rate"] is None or row["measured_raised"] == 0
+                      or abs(row["solve_rate"]
+                             - 100.0 * row["raised_and_solved"] / row["measured_raised"]) < 0.06)
+                check(f"{scope} {row['bucket']}: fully_measured agrees with the counts",
+                      row["fully_measured"] == (row["measured_raised"] == row["raised"]))
+        # A day sits entirely on one side of the capture boundary; only a week can
+        # straddle it. If a day were ever part-measured the split would be wrong.
         for row in f["daily"]:
-            check(f"{row['bucket']}: solved never exceeds raised",
-                  row["raised_and_solved"] is None or row["raised_and_solved"] <= row["raised"])
-            check(f"{row['bucket']}: rate is None exactly when solved is None",
-                  (row["solve_rate"] is None) == (row["raised_and_solved"] is None))
+            check(f"daily {row['bucket']}: measured is all-or-nothing",
+                  row["measured_raised"] in (0, row["raised"]))
+
+        for row in f["weekly"]:
+            check(f"weekly {row['bucket']}: 1-7 days of the window covered",
+                  1 <= row["days_in_bucket"] <= 7)
+            check(f"weekly {row['bucket']}: partial flag agrees with the day count",
+                  row["partial"] == (row["days_in_bucket"] < 7)
+                  or row["days_in_bucket"] == 7)
+            check(f"weekly {row['bucket']}: is a Monday (matches order weeks)",
+                  datetime.fromisoformat(row["bucket"]).weekday() == 0)
 
         section("/api/attendance response shape")
         a = c.get("/api/attendance?days=14").json()

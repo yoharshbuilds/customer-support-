@@ -176,6 +176,9 @@ async def enrich(
         # LLM review — all None when no key is configured or the call failed,
         # so the dashboard degrades to the structured fields rather than breaking.
         "llm_issue": (review or {}).get("issue"),
+        # The dashboard taxonomy, picked from the transcript. issues.classify()
+        # prefers this and falls back to bridging llm_issue for older rows.
+        "llm_issue_category": (review or {}).get("issue_category"),
         "llm_resolution": (review or {}).get("outcome"),
         # llm_sentiment keeps meaning "how the customer left", so existing
         # filters and charts stay valid now that we capture both ends.

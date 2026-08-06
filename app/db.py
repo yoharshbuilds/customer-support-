@@ -105,7 +105,12 @@ ALTER TABLE resolve_events
     ADD COLUMN IF NOT EXISTS csat_sent_at        TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS csat_answer         TEXT,
     ADD COLUMN IF NOT EXISTS csat_answered_at    TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS csat_comment        TEXT;
+    ADD COLUMN IF NOT EXISTS csat_comment        TEXT,
+
+    -- The dashboard's own issue taxonomy, chosen by the model from the
+    -- transcript (see issues.CATEGORIES). Nullable: rows enriched before this
+    -- column existed keep NULL and are bridged from llm_issue at read time.
+    ADD COLUMN IF NOT EXISTS llm_issue_category  TEXT;
 
 ALTER TABLE order_dim
     ADD COLUMN IF NOT EXISTS n_batches      INTEGER,
@@ -120,6 +125,7 @@ ALTER TABLE resolve_events
 CREATE INDEX IF NOT EXISTS idx_resolve_customer ON resolve_events (customer_ref);
 CREATE INDEX IF NOT EXISTS idx_resolve_order    ON resolve_events (order_id);
 CREATE INDEX IF NOT EXISTS idx_resolve_llm      ON resolve_events (llm_issue);
+CREATE INDEX IF NOT EXISTS idx_resolve_llm_cat  ON resolve_events (llm_issue_category);
 
 -- Agent sign-in/sign-out, from the agent_availability webhooks Freshchat was
 -- already sending and we were discarding. This is the only real attendance
