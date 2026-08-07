@@ -864,6 +864,62 @@ def api_issues(days: int = Query(30, ge=1, le=365)):
             "per_day": per_day, "outcome_by_bucket": solved}
 
 
+ISSUE_TICKET_LIMIT = 500
+
+
+@app.get("/api/issues/tickets")
+def api_issue_tickets(
+    category: str = Query(...),
+    days: int = Query(30, ge=1, le=365),
+):
+    """The tickets behind one issue category — cart id + one-line summary each.
+
+    Filters with the same issues.classify() cascade /api/issues uses, so a
+    ticket only appears here if it would count toward that category's bar in
+    the chart. Capped at ISSUE_TICKET_LIMIT, newest first, so a huge category on
+    a wide window returns fast rather than shipping thousands of rows the panel
+    would never usefully show anyway; `truncated` says whether more exist.
+    """
+    if category not in issues.CATEGORY_KEYS:
+        raise HTTPException(400, f"unknown category {category!r}")
+
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT conversation_id, conversation_url, order_id, llm_summary,
+                   llm_issue_category, llm_issue, llm_root_cause, resolved_at
+            FROM resolve_events
+            WHERE resolved_at >= now() - make_interval(days => %(days)s)
+            ORDER BY resolved_at DESC
+            """,
+            {"days": days},
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    matched = [r for r in rows
+               if issues.classify(r.get("llm_issue_category"), r.get("llm_issue"),
+                                  r.get("llm_root_cause"))[0] == category]
+    truncated = len(matched) > ISSUE_TICKET_LIMIT
+    out = [{
+        "conversation_id": r["conversation_id"],
+        "conversation_url": r["conversation_url"],
+        "order_id": r["order_id"],
+        "summary": r.get("llm_summary") or None,
+        "resolved_at": r["resolved_at"],
+    } for r in matched[:ISSUE_TICKET_LIMIT]]
+
+    return _json({
+        "category": category,
+        "label": issues.LABELS.get(category, category),
+        "total": len(matched),
+        "returned": len(out),
+        "truncated": truncated,
+        "no_order_id": sum(1 for r in matched if not r.get("order_id")),
+        "no_summary": sum(1 for r in matched if not r.get("llm_summary")),
+        "tickets": out,
+    })
+
+
 @app.get("/api/tickets_flow")
 def api_tickets_flow(days: int = Query(14, ge=1, le=120)):
     """Tickets raised vs resolved per day, plus how many raised were solved.

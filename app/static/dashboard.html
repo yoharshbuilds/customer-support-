@@ -307,6 +307,10 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
 .isec .iledger b{font-family:var(--i-mono);color:#008300;font-variant-numeric:tabular-nums}
 .isec .iledger b.bad{color:#e34948}
 .isec .iempty{padding:40px;text-align:center;color:var(--i-ink3)}
+.isec .imuted{color:var(--i-ink3);font-style:italic}
+.isec #i_detail .ihead{align-items:center}
+.isec #i_detail_close{flex:none}
+.isec #i_detail .irec-t td{max-width:520px}
 </style>
 </head>
 <body>
@@ -442,7 +446,7 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
       <div class="ipanel">
         <div class="ihead">
           <span class="ifield">All categories</span>
-          <span class="inote">Indented rows sit inside the grey “Other” band — counted, just not given their own hue.</span>
+          <span class="inote">Click a row for the cart ids and a one-line summary of each ticket. Indented rows sit inside the grey “Other” band — counted, just not given their own hue.</span>
         </div>
         <div class="itscroll">
           <table class="irec-t">
@@ -454,6 +458,20 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
           </table>
         </div>
         <div class="iledger" id="i_ledger"></div>
+      </div>
+
+      <div class="ipanel" id="i_detail" hidden>
+        <div class="ihead">
+          <span class="ifield" id="i_detail_title">—</span>
+          <span class="inote" id="i_detail_note"></span>
+          <button class="ighost" id="i_detail_close">Close</button>
+        </div>
+        <div class="itscroll">
+          <table class="irec-t">
+            <thead><tr><th style="width:140px">Cart id</th><th>Issue summary</th><th style="width:170px">Resolved</th><th style="width:70px"></th></tr></thead>
+            <tbody id="i_detail_body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
@@ -846,6 +864,11 @@ function renderIssuePage(){
     $('#i_ledger').textContent = ''; $('#i_legend').innerHTML = ''; return;
   }
   iReadout(m); iChart(m); iLegend(m); iTable(m);
+  // The detail panel's visibility and content are driven entirely by iSel, so
+  // every trigger (a table click, a legend click, a date-range change, a live
+  // refresh) goes through this one place -- there is nowhere else that can
+  // leave it showing a category or a date window that isn't what's on screen.
+  if (iSel) iShowDetail(iSel); else iHideDetail();
 }
 
 function iReadout(m){
@@ -1390,6 +1413,47 @@ $('#i_tbody').addEventListener('click', e => {
   iSel = iSel === tr.dataset.c ? null : tr.dataset.c;
   renderIssuePage();
 });
+$('#i_detail_close').onclick = () => { iSel = null; renderIssuePage(); };
+
+/* Cart id + one-line summary for every ticket behind one category. A separate
+   endpoint rather than folding this into /api/issues: that call already returns
+   the full 30-day breakdown on every page load, and most clicks never open a
+   detail panel, so per-ticket rows (order_id, summary, url) would be dead
+   weight on every load instead of fetched only when actually wanted. */
+async function iShowDetail(key){
+  const panel = $('#i_detail');
+  panel.hidden = false;
+  const known = (ISSUE?.buckets || []).find(b => b.key === key);
+  $('#i_detail_title').textContent = known ? known.label : key;
+  $('#i_detail_note').textContent = 'Loading…';
+  $('#i_detail_body').innerHTML = '';
+  // Page 2 has no live polling loop (unlike Orders/Tickets), so this only ever
+  // fires from a user action -- a row/legend click or a range change while the
+  // panel is open. If a live refresh is ever added here, gate this on that.
+  panel.scrollIntoView({block: 'nearest'});
+  try{
+    const r = await fetch(`/api/issues/tickets?category=${encodeURIComponent(key)}&days=${iDays()}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0,160));
+    const d = await r.json();
+    $('#i_detail_title').textContent = d.label;
+    const bits = [`${d.total} ticket${d.total===1?'':'s'}`];
+    if (d.no_order_id) bits.push(`${d.no_order_id} with no cart id linked`);
+    if (d.no_summary) bits.push(`${d.no_summary} awaiting a summary`);
+    if (d.truncated) bits.push(`showing the ${d.returned} most recent`);
+    $('#i_detail_note').textContent = bits.join(' · ');
+    $('#i_detail_body').innerHTML = d.tickets.length ? d.tickets.map(t => `
+      <tr>
+        <td>${t.order_id ? esc(t.order_id) : '<span class="imuted">no cart id</span>'}</td>
+        <td>${t.summary ? esc(t.summary) : '<span class="imuted">no summary yet</span>'}</td>
+        <td>${when(t.resolved_at)}</td>
+        <td>${t.conversation_url ? `<a href="${esc(t.conversation_url)}" target="_blank" rel="noopener">open ↗</a>` : '—'}</td>
+      </tr>`).join('') : `<tr><td colspan="4" class="iempty">No tickets in this range.</td></tr>`;
+  }catch(e){
+    $('#i_detail_note').textContent = '';
+    $('#i_detail_body').innerHTML = `<tr><td colspan="4" class="iempty">Failed to load: ${esc(e.message)}</td></tr>`;
+  }
+}
+function iHideDetail(){ $('#i_detail').hidden = true; }
 
 $('#o_days').addEventListener('change', () => loadOrders().catch(() => {}));
 $('#o_live').addEventListener('change', scheduleOrders);
