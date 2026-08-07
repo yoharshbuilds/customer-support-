@@ -286,12 +286,25 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
   font-variant-numeric:tabular-nums;white-space:nowrap}
 
 .isec .itscroll{overflow-x:auto}
-.isec .irec-t{border-collapse:collapse;width:100%;min-width:640px}
+/* table-layout:fixed makes the thead widths authoritative, which the sticky-th
+   fix below depends on: without it, a nowrap cell can force the column wider
+   than declared and the whole layout drifts. */
+.isec .irec-t{border-collapse:collapse;width:100%;min-width:640px;table-layout:fixed}
+/* The app's global `th{...}` rule (for the Tickets-tab table) sets
+   position:sticky + a dark --panel background + white-space:nowrap + a pointer
+   cursor on EVERY th on the page, unscoped. Those four are what produced the
+   overlapping dark bar: sticky pinned the header over scrolled-past rows using
+   the app-shell's dark panel colour (this record page pins itself light and
+   never touches --panel), while nowrap forced the long summary text onto one
+   endless line that painted straight through the Resolved/link columns
+   instead of wrapping. All four are overridden explicitly here. */
 .isec .irec-t th{font-family:var(--i-mono);font-size:11.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--i-ink3);font-weight:600;text-align:left;
-  padding:0 12px 10px;border-bottom:1px solid var(--i-rule2)}
+  padding:0 12px 10px;border-bottom:1px solid var(--i-rule2);
+  position:static;top:auto;background:transparent;cursor:default;user-select:auto;
+  white-space:normal}
 .isec .irec-t td{padding:11px 12px;border-bottom:1px solid var(--i-rule);font-size:14px;
-  color:var(--i-ink)}
+  color:var(--i-ink);white-space:normal;overflow-wrap:break-word;word-break:break-word}
 .isec .irec-t th.n,.isec .irec-t td.n{text-align:right;font-family:var(--i-mono);
   font-variant-numeric:tabular-nums}
 .isec .irec-t tbody tr{cursor:pointer}
@@ -310,7 +323,6 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
 .isec .imuted{color:var(--i-ink3);font-style:italic}
 .isec #i_detail .ihead{align-items:center}
 .isec #i_detail_close{flex:none}
-.isec #i_detail .irec-t td{max-width:520px}
 </style>
 </head>
 <body>
@@ -446,7 +458,7 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
       <div class="ipanel">
         <div class="ihead">
           <span class="ifield">All categories</span>
-          <span class="inote">Click a row for the cart ids and a one-line summary of each ticket. Indented rows sit inside the grey “Other” band — counted, just not given their own hue.</span>
+          <span class="inote">Click a row for the cart ids and a one-line summary of each ticket.</span>
         </div>
         <div class="itscroll">
           <table class="irec-t">
@@ -815,10 +827,15 @@ async function loadTickets(){
 
 /* ---------- page 2: issue breakdown ---------------------------------------
  * Categories come from the chat transcript (see app/issues.py); the agent's tag
- * is not consulted. Eight hues is the safe categorical limit, so the eight
- * largest categories get their own colour and the tail folds into one neutral
- * band. Hue is bound to the category KEY, never to its rank, so isolating a
- * series never repaints the others.
+ * is not consulted. Hue is bound to the category KEY, never to its rank, so
+ * isolating a series never repaints the others.
+ *
+ * IOTHER / "folded" below is an Other-band mechanism that is currently DORMANT:
+ * issues.py now sends every category as "charted" and an empty "folded" list
+ * (there is no more 9th-category cutoff), so the `if (folded.length)` guards
+ * throughout this section never trigger and no such band ever renders. Left in
+ * rather than ripped out, since it is what makes an empty FOLDED disappear
+ * with zero template changes if a fold is ever reintroduced.
  */
 const IMON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const IOTHER = '__other';

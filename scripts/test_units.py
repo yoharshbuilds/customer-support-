@@ -88,7 +88,8 @@ def test_issues() -> None:
           set(issues.CHARTED) | set(issues.FOLDED) == issues.CATEGORY_KEYS)
     check("charted and folded do not overlap",
           not (set(issues.CHARTED) & set(issues.FOLDED)))
-    check("exactly eight charted hues", len(issues.CHARTED) == 8)
+    check("nothing folds into an Other band any more",
+          issues.FOLDED == [] and issues.CHARTED == [c["key"] for c in issues.CATEGORIES])
 
     section("issues.audit: exhaustive and mutually exclusive")
     rows = [

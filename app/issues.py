@@ -24,8 +24,21 @@ Buckets are mutually exclusive (one per ticket) and collectively exhaustive
 30-day window; the ordering below is descending by observed volume, which is
 also the display and stacking order.
 
-Colours are the first eight slots of the validated categorical palette, in a
-CVD-checked order, plus greys for the tail that the chart folds into "Other".
+Every category gets its own hue -- nothing folds into an "Other" band. The
+first eight are the validated categorical palette in its CVD-checked order;
+the remaining four were picked and checked the same way (see
+scripts/validate_palette.js in the dataviz skill) but sit past the
+eight-colour ceiling that guarantees full separation, so two things follow:
+  * they were chosen to clear CVD separation against their immediate NEIGHBOURS
+    in this list specifically, because that is what touches in the stacked
+    chart -- not against every other slot, which the palette guidance says is
+    not achievable past eight and does not try to promise here.
+  * `unclassified` is deliberately a low-chroma grey and would fail the
+    palette's own chroma-floor check on its own terms. That is intentional: it
+    is the genuine "could not classify" catch-all, not a real topic, and
+    giving it a confident, vivid colour would overstate what it is. Every
+    category is still named in the legend, table and tooltip, so identity
+    never depends on the hue alone regardless of how many slots are in play.
 """
 from __future__ import annotations
 
@@ -39,19 +52,21 @@ CATEGORIES: list[dict] = [
     {"key": "order_change",   "label": "Order change request",        "color": "#008300"},
     {"key": "payment_app",    "label": "Payment, app & invoice",      "color": "#4a3aa7"},
     {"key": "return_refund",  "label": "Return & refund request",     "color": "#e34948"},
-    # The tail. The stacked chart folds these into a single neutral "Other"
-    # band (eight hues is the safe categorical limit); the table lists them out.
-    {"key": "cancelled_by_us", "label": "Order cancelled by Plazza",  "color": "#8d9498"},
-    {"key": "wrong_damaged",  "label": "Wrong or damaged item",       "color": "#7d858a"},
-    {"key": "availability",   "label": "Availability & serviceability", "color": "#6d757a"},
-    {"key": "unclassified",   "label": "Other / unclassified",        "color": "#5d656a"},
+    {"key": "cancelled_by_us", "label": "Order cancelled by Plazza",  "color": "#92400e"},
+    {"key": "wrong_damaged",  "label": "Wrong or damaged item",       "color": "#0891b2"},
+    {"key": "availability",   "label": "Availability & serviceability", "color": "#65a30d"},
+    {"key": "unclassified",   "label": "Unclassified",                "color": "#78716c"},
 ]
 CATEGORY_KEYS = {c["key"] for c in CATEGORIES}
 COLORS = {c["key"]: c["color"] for c in CATEGORIES}
 LABELS = {c["key"]: c["label"] for c in CATEGORIES}
-# The eight that get their own hue; the rest fold into "Other" in the chart.
-CHARTED = [c["key"] for c in CATEGORIES[:8]]
-FOLDED = [c["key"] for c in CATEGORIES[8:]]
+# Historically the 9th+ slots folded into a chart "Other" band; that grouping
+# is gone, so every category is "charted" and nothing is "folded". Both names
+# are kept (rather than removed) because the frontend keys off them to decide
+# whether to render the Other band at all -- an empty FOLDED is what makes it
+# disappear without any template change.
+CHARTED = [c["key"] for c in CATEGORIES]
+FOLDED: list[str] = []
 
 # Back-compat aliases: the module used to export these names.
 BUCKETS = CATEGORIES
