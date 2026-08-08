@@ -44,45 +44,98 @@ default to generic categories; ignore how it might have been labelled.
 
 - `issue_category`: the same judgement, expressed in the dashboard's own \
 taxonomy. Pick exactly one, by the customer's PRIMARY reason for making \
-contact, not by how it was resolved:
-  * late_delivery - a placed, undelivered order is late, stuck, or shows no \
+contact, not by how it was resolved. A random-sample audit of this taxonomy \
+(reading full transcripts, not keyword-matching) found ~33% of tickets \
+misclassified, concentrated in five specific confusions. The category \
+definitions below have been sharpened against those exact failures -- read \
+the parenthetical warnings, they are not decoration:
+
+  * late_delivery - AN ORDER ALREADY EXISTS and the customer is chasing its \
 progress: "where is my order", no rider assigned, stuck packing, out for \
-delivery but not arriving, wants a firm ETA. Use this whenever the trigger is \
-the wait itself, even if the underlying cause turns out to be stock or Rx.
+delivery but not arriving, wants a firm ETA. THIS IS THE DEFAULT for any \
+placed-order status check, even when the reveal is stock, Rx, or a \
+cancellation, and even when the customer reacts with anger or a cancel demand \
+once told -- unless the rest of the conversation decisively moves onto a \
+different concrete ask (a real refund dispute with an ARN/RRN being chased, an \
+address/phone/slot change, etc). (Audited failure: tickets opening as a plain \
+status check were wrongly filed under cancel_request, prescription, \
+availability, or unclassified just because the ANSWER mentioned Rx, stock, or \
+a cancellation -- the customer's OPENING ask, not the agent's reveal, decides \
+this.)
   * courtesy - no substantive issue: a thank-you, "ok", an emoji, a bare rating \
-digit, a reply to a closing script, or a chat abandoned before any concern was \
-stated.
+digit, a reply to a closing script, or a chat with NO customer message stating \
+any concern at all -- including a chat where the customer only greeted, named \
+a cart, or went silent and the agent closed it for non-response. (Audited \
+failure: chats with zero real customer content were wrongly filed as \
+unclassified; if there is no stated concern, it is courtesy, never \
+unclassified.)
   * prescription - the Rx step itself: the doctor has not called, validation is \
 slow, the customer missed the call, upload failed, they ask how approval works, \
 OR Plazza already cancelled the order for a prescription reason (rejected, \
-expired, missing doctor details, restricted-item rules) and the conversation is \
-substantively about THAT -- explaining the rejection, arranging a revalidation \
-call, discussing a fresh prescription for a reorder. The cancellation is the \
-event; the Rx problem is the topic.
-  * cancel_request - the CUSTOMER asks to cancel before delivery, plus refund \
-timing questions that follow their own cancellation.
-  * missing_items - the order arrived but something is absent: an item shown as \
-delivered was never handed over, short quantity, a missing accessory. Includes \
-chasing a promised replacement for it. Also use this when Plazza cancelled a \
-specific item for unavailability and the customer experienced it as something \
-missing from what they received.
-  * order_change - amend a placed order rather than cancel it: change address or \
-phone, add items, merge shipments, change the slot.
+expired, missing doctor details, restricted-item rules) AND the customer does \
+not dispute the refund -- they are asking about, or working through, the Rx \
+problem itself (revalidation call, fresh prescription for a reorder, why it \
+was rejected). The cancellation is the event; the Rx problem is the topic. If \
+the customer instead pivots to chasing the refund amount or timing, use \
+return_refund instead (see there).
+  * cancel_request - ONLY when the CUSTOMER is the one asking Plazza to cancel \
+an order that has not yet been cancelled -- "please cancel my order", "I want \
+to cancel", stated BEFORE any cancellation happened -- plus the refund-timing \
+follow-up on THEIR OWN cancellation. Do not use this just because the word \
+"cancel" appears: a ticket where PLAZZA already cancelled the order (for \
+stock, Rx, or any reason) and the customer is asking why, or disputing it, is \
+NOT cancel_request -- classify by what they are actually asking about instead \
+(late_delivery if they're really asking about the wait/status, prescription \
+if about the Rx reason, return_refund if about the money). (Audited failure: \
+this was the single most misclassified category -- most of its false positives \
+were Plazza-initiated cancellations that a keyword match mistook for a \
+customer request.)
+  * missing_items - an item is GENUINELY ABSENT at the time of contact: shown \
+as delivered but never handed over, a short quantity (ordered 3, got 2), a \
+missing accessory, with no ETA still pending for it. Also use this when Plazza \
+cancelled a specific item for unavailability and the customer experienced it \
+as something missing. Do NOT use this if (a) the item is still out for \
+delivery or awaiting redispatch -- that is late_delivery even if the customer \
+calls it "missing" -- or (b) the customer received something, but it is the \
+WRONG medicine, brand, or strength, or arrived damaged/expired -- that is \
+wrong_damaged, regardless of whether they describe the mismatch using the \
+word "missing".
+  * order_change - amend a placed order rather than cancel it: change address \
+or phone, add items, merge shipments, change the slot. If the order does not \
+exist yet for the cart in question, this does not apply -- use unclassified.
   * payment_app - platform-side trouble: cannot log in or place an order, \
 errors, money debited with no order created, coupon or referral failures, COD \
 requests, invoice requests or corrections.
   * return_refund - any refund the customer is disputing or chasing: a split \
-payment, a partial amount, timing, an ARN/reference number, a consumer-complaint \
-threat -- OR a post-delivery return/exchange of goods that arrived correctly and \
-undamaged. Use this whenever the conversation's substance is the money, even if \
-an order Plazza cancelled (for any reason, including prescription) is what \
-triggered the refund -- the cancellation is backstory the customer already \
-accepted; what they are actually pushing on is the refund itself.
-  * wrong_damaged - what arrived is not what was ordered (wrong medicine, brand \
-or strength) or arrived damaged, leaking or expired.
-  * availability - a pre-order question: is this medicine stocked or permitted, \
-what substitutes exist, do you deliver to my pincode. No existing order is involved.
-  * unclassified - a real intent that fits none of the above. Use sparingly.
+payment, a partial amount, timing, an ARN/reference number, a \
+consumer-complaint threat -- OR a post-delivery return/exchange of goods that \
+arrived correctly and undamaged. Use this whenever the conversation's \
+substance is the money, even if an order Plazza cancelled (for any reason, \
+including prescription or unavailability) is what triggered the refund -- the \
+cancellation is backstory the customer already accepted; what they are \
+actually pushing on is the refund itself. Do not use this for a delivered item \
+that arrived damaged or wrong with no refund dispute in play -- that is \
+wrong_damaged.
+  * wrong_damaged - the customer RECEIVED something, but it is not what was \
+ordered (wrong medicine, brand, or strength) or it arrived damaged, leaking, \
+or expired. The item is present, just not right -- contrast with \
+missing_items, where nothing was handed over at all.
+  * availability - a PRE-ORDER question with NO existing order behind it: is \
+this medicine stocked or permitted, what substitutes exist, do you deliver to \
+my pincode. If the customer already has a placed order and is asking about \
+ITS delivery or stock status, that is late_delivery, not availability, even \
+though stock is literally what the agent says caused the delay. (Audited \
+failure: this was the second most common confusion -- an existing order being \
+chased was repeatedly mistaken for a pre-order stock question because stock \
+was mentioned.)
+  * unclassified - a LAST RESORT. Before choosing it, check it does not \
+actually fit courtesy (no concern stated), late_delivery (a status check), or \
+return_refund (a refund chase) -- those three absorbed most of what was \
+previously miscategorised here. Reserve unclassified for genuine novelty: a \
+vendor/business/job inquiry, a customer-care-number request with no order \
+context, a question about medicine identity or authenticity, something that \
+is a real ask but plainly outside the other ten. If in doubt between \
+unclassified and a real category, pick the real category.
 
 There is deliberately no separate category for "Plazza cancelled my order" on \
 its own. A cancellation is an event, not a topic -- decide by what the \
