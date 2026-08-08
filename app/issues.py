@@ -24,9 +24,27 @@ Buckets are mutually exclusive (one per ticket) and collectively exhaustive
 30-day window; the ordering below is descending by observed volume, which is
 also the display and stacking order.
 
+Retired category: ``cancelled_by_us`` ("Order cancelled by Plazza") existed
+briefly and was removed after actually reading all 18 of its tickets rather
+than pattern-matching them. "The order was cancelled by Plazza" is an EVENT,
+not something a customer contacts about as a topic in its own right -- every
+one of those 18 conversations was really about something else that happened
+to follow that event:
+  * 10 were substantively about the prescription problem that caused it
+    (doctor validation, re-upload, revalidation calls) -> prescription
+  * 7 were substantively a refund dispute (a split payment, timing, an ARN,
+    a consumer-complaint threat) where the cancellation was one line of
+    backstory and the whole rest of the conversation was about the money
+    -> return_refund
+  * 1 was about a specific absent item, described by the customer as missing
+    -> missing_items
+No keyword or regex produced that split; it came from reading each transcript
+and judging what the conversation was actually about. That is the standing
+method for auditing this taxonomy, not an exception for this one category.
+
 Every category gets its own hue -- nothing folds into an "Other" band. The
 first eight are the validated categorical palette in its CVD-checked order;
-the remaining four were picked and checked the same way (see
+the remaining three were picked and checked the same way (see
 scripts/validate_palette.js in the dataviz skill) but sit past the
 eight-colour ceiling that guarantees full separation, so two things follow:
   * they were chosen to clear CVD separation against their immediate NEIGHBOURS
@@ -52,7 +70,6 @@ CATEGORIES: list[dict] = [
     {"key": "order_change",   "label": "Order change request",        "color": "#008300"},
     {"key": "payment_app",    "label": "Payment, app & invoice",      "color": "#4a3aa7"},
     {"key": "return_refund",  "label": "Return & refund request",     "color": "#e34948"},
-    {"key": "cancelled_by_us", "label": "Order cancelled by Plazza",  "color": "#92400e"},
     {"key": "wrong_damaged",  "label": "Wrong or damaged item",       "color": "#0891b2"},
     {"key": "availability",   "label": "Availability & serviceability", "color": "#65a30d"},
     {"key": "unclassified",   "label": "Unclassified",                "color": "#78716c"},
@@ -112,7 +129,12 @@ ROOT_CAUSE_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("serviceab", "operates in", "deliver to", "delivers to", "non-service"), "availability"),
     (("prescription", " rx "), "prescription"),
     (("refund", "payment", "coupon", "discount", "invoice"), "payment_app"),
-    (("cancelled by", "we cancelled", "order was cancelled"), "cancelled_by_us"),
+    # No "cancelled by us" hint here on purpose -- see the retirement note in the
+    # module docstring. A root cause mentioning ONLY the cancellation, with none
+    # of the keywords above or below, is rare enough in practice (every one of
+    # the 18 tickets that surfaced this gap also mentioned prescription or a
+    # refund) that it is left to fall through to the residual "courtesy" read
+    # rather than engineered for.
     (("damaged", "wrong item", "expired"), "wrong_damaged"),
     (("missing", "not handed", "short quantity"), "missing_items"),
     (("delay", "eta", "late"), "late_delivery"),

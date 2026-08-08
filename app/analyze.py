@@ -53,26 +53,42 @@ the wait itself, even if the underlying cause turns out to be stock or Rx.
 digit, a reply to a closing script, or a chat abandoned before any concern was \
 stated.
   * prescription - the Rx step itself: the doctor has not called, validation is \
-slow, the customer missed the call, upload failed, or they ask how approval works.
+slow, the customer missed the call, upload failed, they ask how approval works, \
+OR Plazza already cancelled the order for a prescription reason (rejected, \
+expired, missing doctor details, restricted-item rules) and the conversation is \
+substantively about THAT -- explaining the rejection, arranging a revalidation \
+call, discussing a fresh prescription for a reorder. The cancellation is the \
+event; the Rx problem is the topic.
   * cancel_request - the CUSTOMER asks to cancel before delivery, plus refund \
 timing questions that follow their own cancellation.
   * missing_items - the order arrived but something is absent: an item shown as \
 delivered was never handed over, short quantity, a missing accessory. Includes \
-chasing a promised replacement for it.
+chasing a promised replacement for it. Also use this when Plazza cancelled a \
+specific item for unavailability and the customer experienced it as something \
+missing from what they received.
   * order_change - amend a placed order rather than cancel it: change address or \
 phone, add items, merge shipments, change the slot.
   * payment_app - platform-side trouble: cannot log in or place an order, \
 errors, money debited with no order created, coupon or referral failures, COD \
 requests, invoice requests or corrections.
-  * return_refund - a post-delivery return, exchange or refund of goods that \
-arrived correctly and undamaged, or a follow-up on an agreed return or credit.
-  * cancelled_by_us - the customer asks why PLAZZA cancelled or rejected their \
-order and what happens to their money. They did not ask for it.
+  * return_refund - any refund the customer is disputing or chasing: a split \
+payment, a partial amount, timing, an ARN/reference number, a consumer-complaint \
+threat -- OR a post-delivery return/exchange of goods that arrived correctly and \
+undamaged. Use this whenever the conversation's substance is the money, even if \
+an order Plazza cancelled (for any reason, including prescription) is what \
+triggered the refund -- the cancellation is backstory the customer already \
+accepted; what they are actually pushing on is the refund itself.
   * wrong_damaged - what arrived is not what was ordered (wrong medicine, brand \
 or strength) or arrived damaged, leaking or expired.
   * availability - a pre-order question: is this medicine stocked or permitted, \
 what substitutes exist, do you deliver to my pincode. No existing order is involved.
   * unclassified - a real intent that fits none of the above. Use sparingly.
+
+There is deliberately no separate category for "Plazza cancelled my order" on \
+its own. A cancellation is an event, not a topic -- decide by what the \
+customer is actually pushing on: the Rx problem (prescription), the money \
+(return_refund), a specific absent item (missing_items), or something else \
+entirely. Do not invent a bucket for the cancellation itself.
 
 - `outcome`: did the customer leave with their problem solved?
   * resolved - the problem was actually fixed or fully answered.
