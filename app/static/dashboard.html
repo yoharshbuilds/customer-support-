@@ -444,6 +444,16 @@ tbody tr td{transition:background-color 600ms var(--ease-out)}
             <button data-v="count" aria-pressed="true">Count</button>
             <button data-v="share" aria-pressed="false">Share %</button>
           </div>
+          <div class="iswitch" id="i_ful">
+            <button data-v="" aria-pressed="true">All orders</button>
+            <button data-v="instant" aria-pressed="false">Instant</button>
+            <button data-v="deferred" aria-pressed="false">Deferred</button>
+          </div>
+          <div class="iswitch" id="i_cross">
+            <button data-v="" aria-pressed="true">Any store</button>
+            <button data-v="true" aria-pressed="false">Cross-store</button>
+            <button data-v="false" aria-pressed="false">Single-store</button>
+          </div>
           <button class="ighost" id="i_clear" hidden>Clear filter</button>
           <span class="ihint">Click a key or a table row to isolate one issue. Hover a column for that day's breakdown.</span>
         </div>
@@ -839,7 +849,7 @@ async function loadTickets(){
  */
 const IMON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const IOTHER = '__other';
-let ISSUE = null, iMode = 'count', iSel = null;
+let ISSUE = null, iMode = 'count', iSel = null, iFul = '', iCross = '';
 
 // The shared range control drives this page too; /api/issues takes a day count.
 function iDays(){
@@ -1029,7 +1039,10 @@ function iShape(m, key, colour){
 }
 
 async function loadStats(){
-  ISSUE = await get('/api/issues', {days: iDays()});
+  // Own filter, not the global ticket-list filter bar (hidden on this page) --
+  // a stale fulfilment/store select left over from page 1 must never leak in
+  // silently, so these are always passed explicitly and override it.
+  ISSUE = await get('/api/issues', {days: iDays(), fulfillment: iFul, cross_store: iCross});
   $('#i_when').textContent = new Date().toLocaleTimeString();
   renderIssuePage();
 }
@@ -1415,6 +1428,18 @@ $('#i_mode').addEventListener('click', e => {
   [...$('#i_mode').children].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
   renderIssuePage();
 });
+$('#i_ful').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  iFul = b.dataset.v;
+  [...$('#i_ful').children].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  loadStats().catch(e => showErr(e.message));
+});
+$('#i_cross').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  iCross = b.dataset.v;
+  [...$('#i_cross').children].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  loadStats().catch(e => showErr(e.message));
+});
 $('#i_clear').onclick = () => { iSel = null; renderIssuePage(); };
 $('#i_legend').addEventListener('click', e => {
   const b = e.target.closest('.ichip'); if (!b) return;
@@ -1449,7 +1474,8 @@ async function iShowDetail(key){
   // panel is open. If a live refresh is ever added here, gate this on that.
   panel.scrollIntoView({block: 'nearest'});
   try{
-    const r = await fetch(`/api/issues/tickets?category=${encodeURIComponent(key)}&days=${iDays()}`);
+    const qp = new URLSearchParams({category: key, days: iDays(), fulfillment: iFul, cross_store: iCross});
+    const r = await fetch(`/api/issues/tickets?${qp}`);
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0,160));
     const d = await r.json();
     $('#i_detail_title').textContent = d.label;

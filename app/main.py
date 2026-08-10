@@ -823,8 +823,18 @@ async def api_attendance(days: int = Query(14, ge=1, le=120)):
     }
 
 
+def _bool_param(v: str | None) -> bool | None:
+    """Same "" -> None, else truthy-string -> bool mapping _filters() uses,
+    so a fulfilment/cross-store filter means the same thing on every page."""
+    return None if v in (None, "") else v.lower() in ("1", "true", "yes")
+
+
 @app.get("/api/issues")
-def api_issues(days: int = Query(30, ge=1, le=365)):
+def api_issues(
+    days: int = Query(30, ge=1, le=365),
+    fulfillment: str | None = Query(None),
+    cross_store: str | None = Query(None),
+):
     """MECE issue breakdown, read from the chat transcript.
 
     The agent's `issue_type` tag is deliberately NOT used to classify: it is
@@ -833,7 +843,13 @@ def api_issues(days: int = Query(30, ge=1, le=365)):
     enrichment time. Rows enriched before that column existed are bridged from
     the older `llm_issue` enum and counted as `legacy` evidence, so
     `transcript_pct` shows how much of the window is natively classified.
+
+    `fulfillment` ("instant"/"deferred") and `cross_store` narrow to orders of
+    that shape -- both come from `order_dim` at enrichment time, so a ticket
+    with no linked order (or one Metabase hasn't resolved yet) drops out of
+    either filter rather than silently counting as a match.
     """
+    cross_store_b = _bool_param(cross_store)
     with db.cursor() as cur:
         cur.execute(
             """
@@ -842,8 +858,11 @@ def api_issues(days: int = Query(30, ge=1, le=365)):
                    llm_resolution
             FROM resolve_events
             WHERE resolved_at >= now() - make_interval(days => %(days)s)
+              AND (%(fulfillment)s::text  IS NULL OR fulfillment   = %(fulfillment)s::text)
+              AND (%(cross_store)s::bool  IS NULL OR is_cross_store = %(cross_store)s::bool)
             """,
-            {"tz": config.TIMEZONE, "days": days},
+            {"tz": config.TIMEZONE, "days": days,
+             "fulfillment": fulfillment or None, "cross_store": cross_store_b},
         )
         rows = [dict(r) for r in cur.fetchall()]
 
@@ -861,7 +880,8 @@ def api_issues(days: int = Query(30, ge=1, le=365)):
         if (r.get("llm_resolution") or "") == "resolved":
             s["resolved"] += 1
     return {**audit, "days": days, "timezone": config.TIMEZONE,
-            "per_day": per_day, "outcome_by_bucket": solved}
+            "per_day": per_day, "outcome_by_bucket": solved,
+            "fulfillment": fulfillment or None, "cross_store": cross_store_b}
 
 
 ISSUE_TICKET_LIMIT = 500
@@ -871,6 +891,8 @@ ISSUE_TICKET_LIMIT = 500
 def api_issue_tickets(
     category: str = Query(...),
     days: int = Query(30, ge=1, le=365),
+    fulfillment: str | None = Query(None),
+    cross_store: str | None = Query(None),
 ):
     """The tickets behind one issue category — cart id + one-line summary each.
 
@@ -879,10 +901,14 @@ def api_issue_tickets(
     the chart. Capped at ISSUE_TICKET_LIMIT, newest first, so a huge category on
     a wide window returns fast rather than shipping thousands of rows the panel
     would never usefully show anyway; `truncated` says whether more exist.
+
+    `fulfillment`/`cross_store` mirror /api/issues' filter so the drill-down
+    panel always matches whatever slice the chart above it is showing.
     """
     if category not in issues.CATEGORY_KEYS:
         raise HTTPException(400, f"unknown category {category!r}")
 
+    cross_store_b = _bool_param(cross_store)
     with db.cursor() as cur:
         cur.execute(
             """
@@ -890,9 +916,11 @@ def api_issue_tickets(
                    llm_issue_category, llm_issue, llm_root_cause, resolved_at
             FROM resolve_events
             WHERE resolved_at >= now() - make_interval(days => %(days)s)
+              AND (%(fulfillment)s::text  IS NULL OR fulfillment   = %(fulfillment)s::text)
+              AND (%(cross_store)s::bool  IS NULL OR is_cross_store = %(cross_store)s::bool)
             ORDER BY resolved_at DESC
             """,
-            {"days": days},
+            {"days": days, "fulfillment": fulfillment or None, "cross_store": cross_store_b},
         )
         rows = [dict(r) for r in cur.fetchall()]
 
