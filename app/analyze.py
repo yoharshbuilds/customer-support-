@@ -53,31 +53,29 @@ the parenthetical warnings, they are not decoration:
   * late_delivery - AN ORDER ALREADY EXISTS and the customer is chasing its \
 progress: "where is my order", no rider assigned, stuck packing, out for \
 delivery but not arriving, wants a firm ETA. THIS IS THE DEFAULT for any \
-placed-order status check, even when the reveal is stock, Rx, or a \
-cancellation, and even when the customer reacts with anger or a cancel demand \
-once told -- unless the rest of the conversation decisively moves onto a \
-different concrete ask (a real refund dispute with an ARN/RRN being chased, an \
-address/phone/slot change, etc). (Audited failure: tickets opening as a plain \
-status check were wrongly filed under cancel_request, prescription, \
-availability, or unclassified just because the ANSWER mentioned Rx, stock, or \
-a cancellation -- the customer's OPENING ask, not the agent's reveal, decides \
-this.)
-    EXCEPTION -- the customer's own words, not the agent's: if the CUSTOMER \
-themself is substantively asking ABOUT the Rx step (why hasn't the doctor \
-called, how long does validation take, what's wrong with my prescription, why \
-do you need a call when I already uploaded it, is my prescription approved), \
-that is prescription, not late_delivery, even though a wait is also in play. \
-The test is not whether the word "prescription" appears anywhere in the \
-chat -- it is whether the customer is asking about the Rx step itself, versus \
-just mentioning "I already sent my prescription" as a passing reassurance \
-while their real, repeated ask stays the wait, the urgency, or a cancel \
-demand (that second case stays late_delivery). If the doctor call already \
-happened per the customer and they are now only asking when it will be \
-delivered, that has graduated back to late_delivery. (Audited: of 72 recent \
-late_delivery tickets whose summary mentioned prescription, only 17 had the \
-customer's own words naming the Rx step, and about two-thirds of THOSE were \
-genuinely prescription -- so this exception is real but narrow; do not let it \
-swallow every ticket where prescription is mentioned at all.)
+placed-order status check, even when the customer reacts with anger or a \
+cancel demand once told -- unless the rest of the conversation decisively \
+moves onto a different concrete ask (a real refund dispute with an ARN/RRN \
+being chased, an address/phone/slot change, etc), OR unless prescription/Rx \
+validation is what the order is actually waiting on (see the exception below \
+-- that one is decided by CAUSE, not by who is asking). Non-Rx causes -- \
+stock/availability, no rider assigned, warehouse delay -- stay late_delivery \
+regardless of who raises them; only the Rx cause gets pulled out. (Audited \
+failure: tickets opening as a plain status check were wrongly filed under \
+cancel_request, availability, or unclassified just because the ANSWER \
+mentioned stock or a cancellation -- the customer's OPENING ask decides those, \
+not the agent's reveal. Prescription is the one deliberate exception, below.)
+    EXCEPTION -- prescription is decided by CAUSE, not by who names it. If the \
+order is (or was) genuinely waiting on Rx validation -- the doctor hasn't \
+called, a prescription is under review, approval is pending -- that is \
+prescription EVEN IF the customer's own words never mention prescription and \
+only ask "how much time" or "where is my delivery", and even if it is the \
+AGENT alone who states the Rx cause. Root cause wins over how the question was \
+phrased. This does NOT apply to other causes (stock, rider assignment, \
+warehouse) -- those stay late_delivery however they surface. It also stops \
+applying once the Rx step is done: if the doctor call already happened and \
+the remaining conversation is purely "when will it arrive", that part is \
+late_delivery again.
   * courtesy - no substantive issue: a thank-you, "ok", an emoji, a bare rating \
 digit, a reply to a closing script, or a chat with NO customer message stating \
 any concern at all -- including a chat where the customer only greeted, named \
@@ -85,12 +83,15 @@ a cart, or went silent and the agent closed it for non-response. (Audited \
 failure: chats with zero real customer content were wrongly filed as \
 unclassified; if there is no stated concern, it is courtesy, never \
 unclassified.)
-  * prescription - the Rx step itself, asked about IN THE CUSTOMER'S OWN \
-WORDS: the doctor has not called, validation is slow, the customer missed the \
-call, upload failed, they ask how approval works, they dispute why a call is \
-even needed -- this applies even if a wait/ETA is also part of the same \
-chat (see the late_delivery exception above for exactly where the line is). \
-OR Plazza already cancelled the order for a prescription reason (rejected, \
+  * prescription - the Rx step itself is what the order is waiting on or was \
+rejected over, WHETHER THE CUSTOMER NAMES IT OR NOT: the doctor has not \
+called, validation is slow, the customer missed the call, upload failed, they \
+ask how approval works, they dispute why a call is even needed, OR the agent \
+explains a delay/ETA chase by citing pending Rx validation or a doctor call as \
+the cause -- that last case is prescription too, even though the customer only \
+asked about delivery timing (see the late_delivery exception above; this is \
+the other half of the same rule). OR Plazza already cancelled the order for a \
+prescription reason (rejected, \
 expired, missing doctor details, restricted-item rules) AND the customer does \
 not dispute the refund -- they are asking about, or working through, the Rx \
 problem itself (revalidation call, fresh prescription for a reorder, why it \
