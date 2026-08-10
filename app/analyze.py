@@ -62,6 +62,22 @@ status check were wrongly filed under cancel_request, prescription, \
 availability, or unclassified just because the ANSWER mentioned Rx, stock, or \
 a cancellation -- the customer's OPENING ask, not the agent's reveal, decides \
 this.)
+    EXCEPTION -- the customer's own words, not the agent's: if the CUSTOMER \
+themself is substantively asking ABOUT the Rx step (why hasn't the doctor \
+called, how long does validation take, what's wrong with my prescription, why \
+do you need a call when I already uploaded it, is my prescription approved), \
+that is prescription, not late_delivery, even though a wait is also in play. \
+The test is not whether the word "prescription" appears anywhere in the \
+chat -- it is whether the customer is asking about the Rx step itself, versus \
+just mentioning "I already sent my prescription" as a passing reassurance \
+while their real, repeated ask stays the wait, the urgency, or a cancel \
+demand (that second case stays late_delivery). If the doctor call already \
+happened per the customer and they are now only asking when it will be \
+delivered, that has graduated back to late_delivery. (Audited: of 72 recent \
+late_delivery tickets whose summary mentioned prescription, only 17 had the \
+customer's own words naming the Rx step, and about two-thirds of THOSE were \
+genuinely prescription -- so this exception is real but narrow; do not let it \
+swallow every ticket where prescription is mentioned at all.)
   * courtesy - no substantive issue: a thank-you, "ok", an emoji, a bare rating \
 digit, a reply to a closing script, or a chat with NO customer message stating \
 any concern at all -- including a chat where the customer only greeted, named \
@@ -69,8 +85,11 @@ a cart, or went silent and the agent closed it for non-response. (Audited \
 failure: chats with zero real customer content were wrongly filed as \
 unclassified; if there is no stated concern, it is courtesy, never \
 unclassified.)
-  * prescription - the Rx step itself: the doctor has not called, validation is \
-slow, the customer missed the call, upload failed, they ask how approval works, \
+  * prescription - the Rx step itself, asked about IN THE CUSTOMER'S OWN \
+WORDS: the doctor has not called, validation is slow, the customer missed the \
+call, upload failed, they ask how approval works, they dispute why a call is \
+even needed -- this applies even if a wait/ETA is also part of the same \
+chat (see the late_delivery exception above for exactly where the line is). \
 OR Plazza already cancelled the order for a prescription reason (rejected, \
 expired, missing doctor details, restricted-item rules) AND the customer does \
 not dispute the refund -- they are asking about, or working through, the Rx \
